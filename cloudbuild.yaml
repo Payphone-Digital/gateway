@@ -1,0 +1,120 @@
+substitutions:
+  _REGION: asia-southeast2
+  _CLUSTER: idn-creatif-cluster1
+  _NAMESPACE: core-be
+  _APP_NAME: management-service
+  _IMAGE_PATH: asia.gcr.io/${PROJECT_ID}/backend/${_APP_NAME}
+
+steps:
+# - id: Run-Tests
+#   name: 'golang:1.24'
+#   entrypoint: go
+#   args: ['test', '-v', './...', '-coverprofile=coverage.out']
+#   timeout: 300s
+
+- id: Build-Docker
+  name: 'gcr.io/cloud-builders/docker'
+  args:
+    - 'build'
+    - '-t'
+    - '${_IMAGE_PATH}:${SHORT_SHA}'
+    - '-t'
+    - '${_IMAGE_PATH}:latest'
+    - '--build-arg'
+    - 'VERSION=${SHORT_SHA}'
+    - '--cache-from'
+    - '${_IMAGE_PATH}:latest'
+    - '--no-cache'  # Tambahkan ini untuk memaksa fresh build
+    - '--progress=plain'  # Tambahkan ini untuk log lebih detail
+    - '.'
+  timeout: 900s
+
+# - id: Security-Scan
+#   name: 'aquasec/trivy'
+#   args:
+#     - 'image'
+#     - '--severity'
+#     - 'HIGH,CRITICAL'
+#     - '--no-progress'
+#     - '${_IMAGE_PATH}:${SHORT_SHA}'
+#   timeout: 300s
+
+- id: Push-Docker
+  name: 'gcr.io/cloud-builders/docker'
+  args: 
+    - 'push'
+    - '--all-tags'
+    - '${_IMAGE_PATH}'
+  timeout: 900s
+
+- id: envSubst-for-deployment.yml
+  name: "gcr.io/$PROJECT_ID/envsubst"
+  env:
+    - "APP_NAME=${_APP_NAME}"
+    - "NAMESPACE=${_NAMESPACE}"
+    - "IMAGE=${_IMAGE_PATH}:${SHORT_SHA}"
+  args: ["deployment.yaml"]  
+
+  # 5. Validate the deployment file after substitution
+- id: Validate-Deployment-File
+  name: "gcr.io/cloud-builders/gcloud"
+  entrypoint: "cat"
+  args: ["deployment.yaml"]
+  timeout: 60s
+
+  # 6. Apply the deployment directly with kubectl
+- id: Apply-Deployment
+  name: "gcr.io/cloud-builders/kubectl"
+  args:
+    - "apply"
+    - "-f"
+    - "deployment.yaml"
+  env:
+    - "CLOUDSDK_COMPUTE_REGION=${_REGION}"
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}"
+  timeout: 300s
+
+  # 7. Force restart the deployment to ensure pods are updated
+- id: Force-Restart
+  name: "gcr.io/cloud-builders/kubectl"
+  args:
+    - "rollout"
+    - "restart"
+    - "deployment/${_APP_NAME}"
+    - "-n"
+    - "${_NAMESPACE}"
+  env:
+    - "CLOUDSDK_COMPUTE_REGION=${_REGION}"
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}"
+  timeout: 120s
+
+  # 8. Verify the deployment rollout status
+- id: Verify-Deployment
+  name: "gcr.io/cloud-builders/kubectl"
+  args:
+    - "rollout"
+    - "status"
+    - "deployment/${_APP_NAME}"
+    - "-n"
+    - "${_NAMESPACE}"
+    - "--timeout=5m"
+  env:
+    - "CLOUDSDK_COMPUTE_REGION=${_REGION}"
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}"
+  timeout: 300s
+
+images:
+  - '${_IMAGE_PATH}:${SHORT_SHA}'
+  - '${_IMAGE_PATH}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - 'GOPRIVATE=github.com/${PROJECT_ID}/*'
+
+timeout: '3600s'
+
+tags:
+  - ${_APP_NAME}
+  - ${_NAMESPACE}
+  - deploy

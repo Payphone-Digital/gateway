@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app: ${APP_NAME}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  template: 
+    metadata:
+      labels:
+        app: ${APP_NAME}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ${APP_NAME} # Service account untuk workload identity
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: ${APP_NAME}
+        image: ${IMAGE}
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+        env:
+        - name: APP_NAME
+          value: "management-service"
+        - name: APP_ENV
+          value: "production"
+        - name: APP_PORT
+          value: "8080"
+        - name: APP_DEBUG
+          value: "false"
+        - name: APP_TIMEOUT
+          value: "30s"
+        - name: GIN_MODE
+          value: "release"
+        # Database Configuration
+        - name: DB_PORT
+          value: "5432" 
+        - name: DB_HOST
+          value: "postgres-apps"
+        - name: DB_NAME
+          value: "main_db"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: pg-apps-secret
+              key: MAIN_DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-apps-secret
+              key: MAIN_DB_PASSWORD
+        # Rate Limiting Configuration
+        - name: RATE_LIMIT_MAX_REQUEST
+          value: "100"
+        - name: RATE_LIMIT_DURATION
+          value: "60"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          failureThreshold: 30
+          periodSeconds: 10
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ${APP_NAME}
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 60
