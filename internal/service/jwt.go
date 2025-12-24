@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/surdiana/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/internal/dto"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )

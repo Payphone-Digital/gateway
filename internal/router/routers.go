@@ -3,29 +3,34 @@ package router
 import (
 	"time"
 
-	"github.com/surdiana/gateway/config"
-	"github.com/surdiana/gateway/internal/handler"
-	"github.com/surdiana/gateway/internal/middleware"
+	"github.com/Payphone-Digital/gateway/config"
+	"github.com/Payphone-Digital/gateway/internal/handler"
+	"github.com/Payphone-Digital/gateway/internal/middleware"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type Router struct {
+	db               *gorm.DB
 	IntegrasiHandler *handler.APIConfigHandler
 	userHandler      *handler.UserHandler
 	authHandler      *handler.AuthHandler
 	cacheHandler     *handler.CacheHandler
+	healthHandler    *handler.HealthHandler
 
-	validMw               *middleware.ValidationMiddleware
-	jwtMw                 *middleware.JWTMiddleware
-	dynamicURIMiddleware  *middleware.DynamicURIMiddleware
-	Config                *config.Config
+	validMw              *middleware.ValidationMiddleware
+	jwtMw                *middleware.JWTMiddleware
+	dynamicURIMiddleware *middleware.DynamicURIMiddleware
+	Config               *config.Config
 }
 
 func NewRouter(
+	db *gorm.DB,
 	integrasi *handler.APIConfigHandler,
 	user *handler.UserHandler,
 	auth *handler.AuthHandler,
 	cache *handler.CacheHandler,
+	health *handler.HealthHandler,
 
 	validMw *middleware.ValidationMiddleware,
 	jwtMw *middleware.JWTMiddleware,
@@ -33,15 +38,17 @@ func NewRouter(
 	config *config.Config,
 ) *Router {
 	return &Router{
+		db:               db,
 		IntegrasiHandler: integrasi,
 		userHandler:      user,
 		authHandler:      auth,
 		cacheHandler:     cache,
+		healthHandler:    health,
 
-		validMw:               validMw,
-		jwtMw:                 jwtMw,
-		dynamicURIMiddleware:  dynamicURIMw,
-		Config:                config,
+		validMw:              validMw,
+		jwtMw:                jwtMw,
+		dynamicURIMiddleware: dynamicURIMw,
+		Config:               config,
 	}
 }
 
@@ -54,17 +61,18 @@ func (r *Router) SetupRoutes() *gin.Engine {
 	router.Use(middleware.RecoveryMiddleware())
 	router.Use(middleware.RequestResponseMiddleware())
 	router.Use(middleware.SecurityLoggingMiddleware())
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(r.db)) // Pass DB to CORS middleware
+
+	// Dynamic URI middleware - handles custom path routing to forward requests to configured backends
+	// This middleware intercepts non-/api requests and routes them based on APIConfig in database
+	router.Use(r.dynamicURIMiddleware.HandleDynamicURI())
 
 	api := router.Group("/api")
 	{
-		api.GET("/health", func(c *gin.Context) {
-			c.JSON(200, gin.H{
-				"status":    "healthy",
-				"version":   "1.0.0",
-				"timestamp": time.Now(),
-			})
-		})
+		// Basic health check (for load balancers)
+		api.GET("/health", r.healthHandler.BasicHealth)
+		// Comprehensive health check
+		api.GET("/health/detailed", r.healthHandler.HealthCheck)
 		v1 := api.Group("/v1")
 		{
 			v1.Use(middleware.RateLimit(r.Config.RateLimit.Request, time.Duration(r.Config.RateLimit.Duration)*time.Second))

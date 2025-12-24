@@ -26,12 +26,16 @@ type AppConfig struct {
 }
 
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Name     string `mapstructure:"name"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	SSLMode  string `mapstructure:"sslmode"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	Name            string        `mapstructure:"name"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	SSLMode         string        `mapstructure:"sslmode"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
 }
 
 type JWTConfig struct {
@@ -46,6 +50,7 @@ type RedisConfig struct {
 	Port         int           `mapstructure:"port"`
 	Password     string        `mapstructure:"password"`
 	Database     int           `mapstructure:"database"`
+	Enabled      bool          `mapstructure:"enabled"`
 	PoolSize     int           `mapstructure:"pool_size"`
 	MinIdleConns int           `mapstructure:"min_idle_conns"`
 	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
@@ -75,18 +80,23 @@ func LoadConfig() (*Config, error) {
 			Timeout:     getEnvAsDuration("APP_TIMEOUT", 30*time.Second),
 		},
 		Database: DatabaseConfig{
-			Host:     getEnv("DB_HOST", "localhost"),
-			Port:     getEnvAsInt("DB_PORT", 5432),
-			Name:     getEnv("DB_NAME", "auth_db"),
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", "postgres"),
-			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+			Host:            getEnv("DB_HOST", "localhost"),
+			Port:            getEnvAsInt("DB_PORT", 5432),
+			Name:            getEnv("DB_NAME", "auth_db"),
+			User:            getEnv("DB_USER", "postgres"),
+			Password:        getEnv("DB_PASSWORD", "postgres"),
+			SSLMode:         getEnv("DB_SSL_MODE", "disable"),
+			MaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 25),
+			MaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 200),
+			ConnMaxLifetime: getEnvAsDuration("DB_CONN_MAX_LIFETIME", 2*time.Hour),
+			ConnMaxIdleTime: getEnvAsDuration("DB_CONN_MAX_IDLE_TIME", 15*time.Minute),
 		},
 		Redis: RedisConfig{
 			Host:         getEnv("REDIS_HOST", "localhost"),
 			Port:         getEnvAsInt("REDIS_PORT", 6379),
 			Password:     getEnv("REDIS_PASSWORD", ""),
 			Database:     getEnvAsInt("REDIS_DB", 0),
+			Enabled:      getEnvAsBool("REDIS_ENABLED", true),
 			PoolSize:     getEnvAsInt("REDIS_POOL_SIZE", 10),
 			MinIdleConns: getEnvAsInt("REDIS_MIN_IDLE_CONNS", 5),
 			DialTimeout:  getEnvAsDuration("REDIS_DIAL_TIMEOUT", 5*time.Second),
@@ -160,4 +170,3 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	return defaultValue
 }
-

@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/surdiana/gateway/internal/repository"
-	"github.com/surdiana/gateway/internal/service"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/repository"
+	"github.com/Payphone-Digital/gateway/internal/service"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

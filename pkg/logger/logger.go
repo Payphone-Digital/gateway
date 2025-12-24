@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/surdiana/gateway/config"
+	"github.com/Payphone-Digital/gateway/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

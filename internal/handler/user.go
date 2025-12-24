@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/surdiana/gateway/internal/constants"
-	"github.com/surdiana/gateway/internal/dto"
-	apperrors "github.com/surdiana/gateway/internal/errors"
-	"github.com/surdiana/gateway/internal/service"
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/constants"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	apperrors "github.com/Payphone-Digital/gateway/internal/errors"
+	"github.com/Payphone-Digital/gateway/internal/service"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,7 +25,7 @@ func NewUserHandler(service *service.UserService) *UserHandler {
 
 func (h *UserHandler) GetByID(c *gin.Context) {
 	// Create context with request information
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "GetByID")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "GetByID")
 
 	id := c.Param("id")
 
@@ -69,7 +69,7 @@ func (h *UserHandler) GetByID(c *gin.Context) {
 
 func (h *UserHandler) GetAll(c *gin.Context) {
 	// Create context with request information
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "GetAll")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "GetAll")
 
 	// Parse pagination parameters
 	pagination := constants.ParsePaginationParams(c)
@@ -113,7 +113,7 @@ func (h *UserHandler) GetAll(c *gin.Context) {
 
 // CreateUser creates a new user
 func (h *UserHandler) CreateUser(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "CreateUser")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "CreateUser")
 
 	var req dto.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -152,7 +152,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 // UpdateUser updates user information (excluding email)
 func (h *UserHandler) UpdateUser(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "UpdateUser")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "UpdateUser")
 
 	idStr := c.Param("id")
 	id64, err := strconv.ParseUint(idStr, 10, 32)
@@ -204,7 +204,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 
 // UpdatePassword updates user password with current password verification
 func (h *UserHandler) UpdatePassword(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "UpdatePassword")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "UpdatePassword")
 
 	idStr := c.Param("id")
 	id64, err := strconv.ParseUint(idStr, 10, 32)
@@ -265,7 +265,7 @@ func (h *UserHandler) UpdatePassword(c *gin.Context) {
 
 // DeleteUser performs hard delete on user with security validations
 func (h *UserHandler) DeleteUser(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "DeleteUser")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "DeleteUser")
 
 	// Get target user ID from URL parameter
 	idParam := c.Param("id")

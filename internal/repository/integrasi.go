@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/surdiana/gateway/internal/model"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/model"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -84,6 +84,36 @@ func (r *APIConfigRepository) GetByIDURLConfig(id uint) (*model.URLConfig, error
 	return &res, nil
 }
 
+func (r *APIConfigRepository) FindByURLConfig(ctx context.Context, url string) (*model.URLConfig, error) {
+	if err := ctx.Err(); err != nil {
+		logger.GetLogger().Warn("Repository: Context cancelled before finding URL config by url",
+			zap.String("url", url),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	logger.GetLogger().Debug("Repository: Finding URL config by url",
+		zap.String("url", url),
+	)
+
+	start := time.Now()
+	var res model.URLConfig
+	err := r.db.WithContext(ctx).Where("url = ?", url).First(&res).Error
+	duration := time.Since(start)
+
+	if err != nil {
+		logger.GetLogger().Error("Repository: Failed to find URL config by url",
+			zap.String("url", url),
+			zap.Duration("query_duration", duration),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	return &res, nil
+}
+
 func (r *APIConfigRepository) GetAllURLConfig(limit, offset int, search string) ([]model.URLConfig, int64, error) {
 	logger.GetLogger().Debug("Repository: Getting all URL configs",
 		zap.Int("limit", limit),
@@ -153,7 +183,8 @@ func (r *APIConfigRepository) UpdateURLConfig(ctx context.Context, req *model.UR
 	)
 
 	start := time.Now()
-	err := r.db.WithContext(ctx).Save(req).Error
+	// Use Select("*").Updates() to ensures zero values are updated
+	err := r.db.WithContext(ctx).Model(req).Select("*").Updates(req).Error
 	duration := time.Since(start)
 
 	if err != nil {
@@ -210,14 +241,14 @@ func (r *APIConfigRepository) DeleteURLConfig(ctx context.Context, id uint) erro
 func (r *APIConfigRepository) CreateConfig(ctx context.Context, req *model.APIConfig) error {
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Repository: Context cancelled before creating API config",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Error(err),
 		)
 		return err
 	}
 
 	logger.GetLogger().Debug("Repository: Creating API config",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 		zap.String("method", req.Method),
 		zap.Uint("url_config_id", req.URLConfigID),
 		zap.String("uri", req.URI),
@@ -232,13 +263,13 @@ func (r *APIConfigRepository) CreateConfig(ctx context.Context, req *model.APICo
 
 	if err != nil {
 		logger.GetLogger().Error("Repository: Failed to create API config",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Duration("query_duration", duration),
 			zap.Error(err),
 		)
 	} else {
 		logger.GetLogger().Info("Repository: API config created successfully",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Uint("config_id", req.ID),
 			zap.Duration("query_duration", duration),
 		)
@@ -252,14 +283,14 @@ func (r *APIConfigRepository) CreateGroup(ctx context.Context, req *model.APIGro
 	// Check context cancellation
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Repository: Context cancelled before creating API group",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Error(err),
 		)
 		return err
 	}
 
 	logger.GetLogger().Debug("Repository: Creating API group",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Slug),
 		zap.String("name", req.Name),
 	)
 
@@ -270,13 +301,13 @@ func (r *APIConfigRepository) CreateGroup(ctx context.Context, req *model.APIGro
 
 	if err != nil {
 		logger.GetLogger().Error("Repository: Failed to create API group",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Duration("query_duration", duration),
 			zap.Error(err),
 		)
 	} else {
 		logger.GetLogger().Info("Repository: API group created successfully",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Uint("group_id", req.ID),
 			zap.Duration("query_duration", duration),
 		)
@@ -333,14 +364,14 @@ func (r *APIConfigRepository) CreateGroupCron(ctx context.Context, req *model.AP
 	// Check context cancellation
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Repository: Context cancelled before creating API group cron",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Error(err),
 		)
 		return err
 	}
 
 	logger.GetLogger().Debug("Repository: Creating API group cron",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Slug),
 		zap.String("schedule", req.Schedule),
 		zap.Bool("enabled", req.Enabled),
 	)
@@ -352,13 +383,13 @@ func (r *APIConfigRepository) CreateGroupCron(ctx context.Context, req *model.AP
 
 	if err != nil {
 		logger.GetLogger().Error("Repository: Failed to create API group cron",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Duration("query_duration", duration),
 			zap.Error(err),
 		)
 	} else {
 		logger.GetLogger().Info("Repository: API group cron created successfully",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Uint("cron_id", req.ID),
 			zap.Duration("query_duration", duration),
 		)
@@ -375,7 +406,7 @@ func (r *APIConfigRepository) UpdateConfig(ctx context.Context, req *model.APICo
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Repository: Context cancelled before updating API config",
 			zap.Uint("config_id", req.ID),
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Error(err),
 		)
 		return err
@@ -383,7 +414,7 @@ func (r *APIConfigRepository) UpdateConfig(ctx context.Context, req *model.APICo
 
 	logger.GetLogger().Debug("Repository: Updating API config",
 		zap.Uint("config_id", req.ID),
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 		zap.String("method", req.Method),
 		zap.Uint("url_config_id", req.URLConfigID),
 		zap.String("uri", req.URI),
@@ -392,20 +423,22 @@ func (r *APIConfigRepository) UpdateConfig(ctx context.Context, req *model.APICo
 	)
 
 	start := time.Now()
-	err := r.db.WithContext(ctx).Save(req).Error
+	// Use Select("*").Updates() to ensures zero values (like IsAdmin=false) are updated
+	// GORM's Save() or Updates() by default can ignore zero values on structs
+	err := r.db.WithContext(ctx).Model(req).Select("*").Updates(req).Error
 	duration := time.Since(start)
 
 	if err != nil {
 		logger.GetLogger().Error("Repository: Failed to update API config",
 			zap.Uint("config_id", req.ID),
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Duration("query_duration", duration),
 			zap.Error(err),
 		)
 	} else {
 		logger.GetLogger().Info("Repository: API config updated successfully",
 			zap.Uint("config_id", req.ID),
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Duration("query_duration", duration),
 		)
 	}
@@ -417,7 +450,7 @@ func (r *APIConfigRepository) UpdateConfig(ctx context.Context, req *model.APICo
 func (r *APIConfigRepository) UpdateGroup(req *model.APIGroup) error {
 	logger.GetLogger().Debug("Repository: Updating API group",
 		zap.Uint("group_id", req.ID),
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Slug),
 		zap.String("name", req.Name),
 	)
 
@@ -428,14 +461,14 @@ func (r *APIConfigRepository) UpdateGroup(req *model.APIGroup) error {
 	if err != nil {
 		logger.GetLogger().Error("Repository: Failed to update API group",
 			zap.Uint("group_id", req.ID),
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Duration("query_duration", duration),
 			zap.Error(err),
 		)
 	} else {
 		logger.GetLogger().Info("Repository: API group updated successfully",
 			zap.Uint("group_id", req.ID),
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Slug),
 			zap.Duration("query_duration", duration),
 		)
 	}
@@ -677,7 +710,7 @@ func (r *APIConfigRepository) GetByIDConfig(id uint) (*model.APIConfig, error) {
 
 	logger.GetLogger().Debug("Repository: API config retrieved successfully",
 		zap.Uint("config_id", id),
-		zap.String("slug", res.Slug),
+		zap.String("path", res.Path),
 		zap.String("method", res.Method),
 		zap.Duration("query_duration", duration),
 	)
@@ -707,7 +740,7 @@ func (r *APIConfigRepository) GetByIDGroup(id uint) (*model.APIGroup, error) {
 
 	logger.GetLogger().Debug("Repository: API group retrieved successfully",
 		zap.Uint("group_id", id),
-		zap.String("slug", res.Slug),
+		zap.String("path", res.Slug),
 		zap.String("name", res.Name),
 		zap.Duration("query_duration", duration),
 	)
@@ -787,7 +820,7 @@ func (r *APIConfigRepository) GetByIDGroupCron(ctx context.Context, id uint) (*m
 
 	logger.GetLogger().Debug("Repository: API group cron retrieved successfully",
 		zap.Uint("cron_id", id),
-		zap.String("slug", res.Slug),
+		zap.String("path", res.Slug),
 		zap.String("schedule", res.Schedule),
 		zap.Bool("enabled", res.Enabled),
 		zap.Duration("query_duration", duration),
@@ -800,7 +833,7 @@ func (r *APIConfigRepository) GetByIDGroupCron(ctx context.Context, id uint) (*m
 
 // Start By Slug
 
-func (r *APIConfigRepository) FindBySlugConfig(ctx context.Context, slug string) (*model.APIConfig, error) {
+func (r *APIConfigRepository) FindByPathConfig(ctx context.Context, slug string) (*model.APIConfig, error) {
 	// Check context cancellation
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Repository: Context cancelled before finding API config by slug",
@@ -816,7 +849,7 @@ func (r *APIConfigRepository) FindBySlugConfig(ctx context.Context, slug string)
 
 	start := time.Now()
 	var res model.APIConfig
-	err := r.db.WithContext(ctx).Preload("URLConfig").Where("slug = ?", slug).First(&res).Error
+	err := r.db.WithContext(ctx).Preload("URLConfig").Where("path = ?", slug).First(&res).Error
 	duration := time.Since(start)
 
 	if err != nil {
@@ -832,6 +865,49 @@ func (r *APIConfigRepository) FindBySlugConfig(ctx context.Context, slug string)
 		zap.String("slug", slug),
 		zap.Uint("config_id", res.ID),
 		zap.String("method", res.Method),
+		zap.Duration("query_duration", duration),
+	)
+
+	return &res, nil
+}
+
+// FindByPathAndMethodConfig finds API config by path and method combination
+// This allows same path with different methods (e.g., GET /users and POST /users)
+func (r *APIConfigRepository) FindByPathAndMethodConfig(ctx context.Context, path, method string) (*model.APIConfig, error) {
+	// Check context cancellation
+	if err := ctx.Err(); err != nil {
+		logger.GetLogger().Warn("Repository: Context cancelled before finding API config by path and method",
+			zap.String("path", path),
+			zap.String("method", method),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	logger.GetLogger().Debug("Repository: Finding API config by path and method",
+		zap.String("path", path),
+		zap.String("method", method),
+	)
+
+	start := time.Now()
+	var res model.APIConfig
+	err := r.db.WithContext(ctx).Preload("URLConfig").Where("path = ? AND method = ?", path, method).First(&res).Error
+	duration := time.Since(start)
+
+	if err != nil {
+		logger.GetLogger().Debug("Repository: API config not found by path and method",
+			zap.String("path", path),
+			zap.String("method", method),
+			zap.Duration("query_duration", duration),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	logger.GetLogger().Debug("Repository: API config found by path and method successfully",
+		zap.String("path", path),
+		zap.String("method", method),
+		zap.Uint("config_id", res.ID),
 		zap.Duration("query_duration", duration),
 	)
 
@@ -912,7 +988,7 @@ func (r *APIConfigRepository) FindByURIConfig(ctx context.Context, uri, method s
 		zap.String("uri", uri),
 		zap.String("method", method),
 		zap.Uint("config_id", res.ID),
-		zap.String("slug", res.Slug),
+		zap.String("path", res.Path),
 		zap.Duration("query_duration", duration),
 	)
 
@@ -1064,7 +1140,7 @@ func (r *APIConfigRepository) GetAllConfig(limit, offset int, search string, url
 	if search != "" {
 		searchPattern := "%" + search + "%"
 		query = query.Where(
-			"slug ILIKE ? OR method ILIKE ? OR description ILIKE ?",
+			"path ILIKE ? OR method ILIKE ? OR description ILIKE ?",
 			searchPattern, searchPattern, searchPattern,
 		)
 		logger.GetLogger().Debug("Repository: Applied search filter for API configs",
@@ -1110,6 +1186,38 @@ func (r *APIConfigRepository) GetAllConfig(limit, offset int, search string, url
 	)
 
 	return pages, total, nil
+}
+
+// LoadAllActiveConfigs loads all active API configs for route registry
+func (r *APIConfigRepository) LoadAllActiveConfigs(ctx context.Context) ([]model.APIConfig, error) {
+	logger.GetLogger().Info("Repository: Loading all active API configs for registry")
+
+	start := time.Now()
+	var configs []model.APIConfig
+
+	// Load all configs with URLConfig preloaded
+	// No pagination, no search - we want ALL configs
+	err := r.db.WithContext(ctx).
+		Preload("URLConfig").
+		Where("uri != ''"). // Only configs with URI (for dynamic routing)
+		Find(&configs).Error
+
+	duration := time.Since(start)
+
+	if err != nil {
+		logger.GetLogger().Error("Repository: Failed to load all active configs",
+			zap.Duration("query_duration", duration),
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	logger.GetLogger().Info("Repository: All active configs loaded successfully",
+		zap.Int("count", len(configs)),
+		zap.Duration("query_duration", duration),
+	)
+
+	return configs, nil
 }
 
 // DISABLED: GetAllGroup - Group-related functions are disabled

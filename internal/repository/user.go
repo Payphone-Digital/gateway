@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/surdiana/gateway/internal/model"
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/model"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -321,7 +321,7 @@ func (r *UserRepository) UpdateRefreshToken(ctx context.Context, id uint, refres
 
 	start := time.Now()
 	result := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"refresh_token_hash":    refreshTokenHash,
+		"refresh_token_hash":       refreshTokenHash,
 		"refresh_token_expires_at": expiresAt,
 	})
 	duration := time.Since(start)
@@ -446,7 +446,7 @@ func (r *UserRepository) CleanupExpiredRefreshTokens(ctx context.Context) (int64
 		Model(&model.User{}).
 		Where("refresh_token_expires_at IS NOT NULL AND refresh_token_expires_at < ?", time.Now()).
 		Updates(map[string]interface{}{
-			"refresh_token_hash":     nil,
+			"refresh_token_hash":       nil,
 			"refresh_token_expires_at": nil,
 		})
 	duration := time.Since(start)

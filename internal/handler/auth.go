@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/surdiana/gateway/internal/constants"
-	"github.com/surdiana/gateway/internal/dto"
-	apperrors "github.com/surdiana/gateway/internal/errors"
-	"github.com/surdiana/gateway/internal/service"
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/constants"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	apperrors "github.com/Payphone-Digital/gateway/internal/errors"
+	"github.com/Payphone-Digital/gateway/internal/service"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,7 +25,7 @@ func NewAuthHandler(userService *service.UserService) *AuthHandler {
 
 // Login handles user authentication
 func (h *AuthHandler) Login(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "Login")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "Login")
 
 	var req dto.UserLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,7 +61,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // RefreshToken handles JWT token refresh using refresh token
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "RefreshToken")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "RefreshToken")
 
 	var req dto.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -95,7 +95,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(c *gin.Context) {
-	ctx := ctxutil.NewContext(c.Request.Context(), c.Request, "handler", "Logout")
+	ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, "handler", "Logout")
 
 	// Get user info from context (set by JWT middleware)
 	userID, exists := c.Get("user_id")

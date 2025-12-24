@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/surdiana/gateway/internal/dto"
-	"github.com/surdiana/gateway/internal/model"
-	"github.com/surdiana/gateway/internal/repository"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/internal/model"
+	"github.com/Payphone-Digital/gateway/internal/repository"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"go.uber.org/zap"
 )
 
@@ -46,14 +46,14 @@ func (s *APIConfigService) CreateConfig(ctx context.Context, req dto.APIConfigRe
 	// Check context cancellation first
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Service: Context cancelled before creating API config",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Error(err),
 		)
 		return http.StatusRequestTimeout, err
 	}
 
 	logger.GetLogger().Info("Service: Creating API config",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 		zap.String("method", req.Method),
 		zap.Uint("url_config_id", req.URLConfigID),
 		zap.Int("max_retries", req.MaxRetries),
@@ -72,9 +72,11 @@ func (s *APIConfigService) CreateConfig(ctx context.Context, req dto.APIConfigRe
 	queryParamsJSON, _ := json.Marshal(req.QueryParams)
 	bodyJSON, _ := json.Marshal(req.Body)
 	variablesJSON, _ := json.Marshal(req.Variables)
+	basicAuthUsersJSON, _ := json.Marshal(req.BasicAuthUsers)
+	apiKeysJSON, _ := json.Marshal(req.APIKeys)
 
 	apiConfig := &model.APIConfig{
-		Slug:         req.Slug,
+		Path:         req.Path,
 		Method:       req.Method,
 		URLConfigID:  req.URLConfigID,
 		URI:          req.URI,
@@ -88,19 +90,33 @@ func (s *APIConfigService) CreateConfig(ctx context.Context, req dto.APIConfigRe
 		Manipulation: req.Manipulation,
 		Description:  req.Description,
 		IsAdmin:      req.IsAdmin,
+		// Auth Fields
+		AuthType:         req.AuthType,
+		AuthRequired:     req.AuthRequired,
+		AuthGRPCConfigID: req.AuthGRPCConfigID,
+		JWTSecretKey:     req.JWTSecretKey,
+		JWTIssuer:        req.JWTIssuer,
+		JWTAudience:      req.JWTAudience,
+		JWTAlgorithm:     req.JWTAlgorithm,
+		JWTExpiration:    req.JWTExpiration,
+		BasicAuthUsers:   basicAuthUsersJSON,
+		APIKeyHeader:     req.APIKeyHeader,
+		APIKeyLocation:   req.APIKeyLocation,
+		APIKeys:          apiKeysJSON,
 	}
 
-	if _, err := s.repo.FindBySlugConfig(ctx, req.Slug); err == nil {
-		logger.GetLogger().Warn("Service: API config with slug already exists",
-			zap.String("slug", req.Slug),
+	if _, err := s.repo.FindByPathAndMethodConfig(ctx, req.Path, req.Method); err == nil {
+		logger.GetLogger().Warn("Service: API config with path and method already exists",
+			zap.String("path", req.Path),
+			zap.String("method", req.Method),
 		)
-		return http.StatusConflict, errors.New("API config with this slug already exists")
+		return http.StatusConflict, errors.New("API config with this path and method already exists")
 	}
 
 	// Check context before expensive operation
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Error(err),
 		)
 		return http.StatusRequestTimeout, err
@@ -108,14 +124,14 @@ func (s *APIConfigService) CreateConfig(ctx context.Context, req dto.APIConfigRe
 
 	if err := s.repo.CreateConfig(ctx, apiConfig); err != nil {
 		logger.GetLogger().Error("Service: Failed to create API config",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.Error(err),
 		)
 		return http.StatusInternalServerError, err
 	}
 
 	logger.GetLogger().Info("Service: API config created successfully",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 	)
 
 	return http.StatusCreated, nil
@@ -124,65 +140,65 @@ func (s *APIConfigService) CreateConfig(ctx context.Context, req dto.APIConfigRe
 // DISABLED: Group creation function
 func (s *APIConfigService) CreateGroup(ctx context.Context, req dto.APIGroupRequest) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before creating API group",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before creating API group",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		logger.GetLogger().Info("Service: Creating API group",
+			zap.String("path", req.Path),
+			zap.String("name", req.Name),
+			zap.Bool("is_admin", req.IsAdmin),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	logger.GetLogger().Info("Service: Creating API group",
-		zap.String("slug", req.Slug),
-		zap.String("name", req.Name),
-		zap.Bool("is_admin", req.IsAdmin),
-	)
+		apiGroup := &model.APIGroup{
+			Path:    req.Path,
+			Name:    req.Name,
+			IsAdmin: req.IsAdmin,
+		}
 
-	apiGroup := &model.APIGroup{
-		Slug:    req.Slug,
-		Name:    req.Name,
-		IsAdmin: req.IsAdmin,
-	}
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before slug check",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
 
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before slug check",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
+		if _, err := s.repo.FindBySlugGroup(req.Path); err == nil {
+			logger.GetLogger().Warn("Service: API group with slug already exists",
+				zap.String("path", req.Path),
+			)
+			return http.StatusConflict, errors.New("API Group with this slug already exists")
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.CreateGroup(ctx, apiGroup); err != nil {
+			logger.GetLogger().Error("Service: Failed to create API group",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group created successfully",
+			zap.String("path", req.Path),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	if _, err := s.repo.FindBySlugGroup(req.Slug); err == nil {
-		logger.GetLogger().Warn("Service: API group with slug already exists",
-			zap.String("slug", req.Slug),
-		)
-		return http.StatusConflict, errors.New("API Group with this slug already exists")
-	}
-
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	if err := s.repo.CreateGroup(ctx, apiGroup); err != nil {
-		logger.GetLogger().Error("Service: Failed to create API group",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group created successfully",
-		zap.String("slug", req.Slug),
-	)
-
-	return http.StatusCreated, nil
+		return http.StatusCreated, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -190,58 +206,58 @@ func (s *APIConfigService) CreateGroup(ctx context.Context, req dto.APIGroupRequ
 // DISABLED: Group step creation function
 func (s *APIConfigService) CreateGroupStep(ctx context.Context, req dto.APIGroupStepRequest) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before creating API group step",
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before creating API group step",
+				zap.Uint("group_id", req.GroupID),
+				zap.String("alias", req.Alias),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		logger.GetLogger().Info("Service: Creating API group step",
+			zap.Uint("group_id", req.GroupID),
+			zap.Uint("api_config_id", req.APIConfigID),
+			zap.String("alias", req.Alias),
+			zap.Int("order_index", req.OrderIndex),
+			zap.Int("variables_count", len(req.Variables)),
+		)
+
+		variablesJSON, _ := json.Marshal(req.Variables)
+		groupStep := &model.APIGroupStep{
+			GroupID:     req.GroupID,
+			APIConfigID: req.APIConfigID,
+			OrderIndex:  req.OrderIndex,
+			Alias:       req.Alias,
+			Variables:   variablesJSON,
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("group_id", req.GroupID),
+				zap.String("alias", req.Alias),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.CreateGroupStep(ctx, groupStep); err != nil {
+			logger.GetLogger().Error("Service: Failed to create API group step",
+				zap.Uint("group_id", req.GroupID),
+				zap.String("alias", req.Alias),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group step created successfully",
 			zap.Uint("group_id", req.GroupID),
 			zap.String("alias", req.Alias),
-			zap.Error(err),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	logger.GetLogger().Info("Service: Creating API group step",
-		zap.Uint("group_id", req.GroupID),
-		zap.Uint("api_config_id", req.APIConfigID),
-		zap.String("alias", req.Alias),
-		zap.Int("order_index", req.OrderIndex),
-		zap.Int("variables_count", len(req.Variables)),
-	)
-
-	variablesJSON, _ := json.Marshal(req.Variables)
-	groupStep := &model.APIGroupStep{
-		GroupID:     req.GroupID,
-		APIConfigID: req.APIConfigID,
-		OrderIndex:  req.OrderIndex,
-		Alias:       req.Alias,
-		Variables:   variablesJSON,
-	}
-
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.Uint("group_id", req.GroupID),
-			zap.String("alias", req.Alias),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	if err := s.repo.CreateGroupStep(ctx, groupStep); err != nil {
-		logger.GetLogger().Error("Service: Failed to create API group step",
-			zap.Uint("group_id", req.GroupID),
-			zap.String("alias", req.Alias),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group step created successfully",
-		zap.Uint("group_id", req.GroupID),
-		zap.String("alias", req.Alias),
-	)
-
-	return http.StatusCreated, nil
+		return http.StatusCreated, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group step functions are disabled")
 }
@@ -249,66 +265,66 @@ func (s *APIConfigService) CreateGroupStep(ctx context.Context, req dto.APIGroup
 // DISABLED: Group cron creation function
 func (s *APIConfigService) CreateGroupCron(ctx context.Context, req dto.APIGroupCronRequest) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before creating API group cron",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before creating API group cron",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		logger.GetLogger().Info("Service: Creating API group cron",
+			zap.String("path", req.Path),
+			zap.String("schedule", req.Schedule),
+			zap.Bool("enabled", req.Enabled),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	logger.GetLogger().Info("Service: Creating API group cron",
-		zap.String("slug", req.Slug),
-		zap.String("schedule", req.Schedule),
-		zap.Bool("enabled", req.Enabled),
-	)
+		apiGroupCron := &model.APIGroupCron{
+			Slug:     req.Path,
+			Schedule: req.Schedule,
+			Enabled:  req.Enabled,
+		}
 
-	apiGroupCron := &model.APIGroupCron{
-		Slug:     req.Slug,
-		Schedule: req.Schedule,
-		Enabled:  req.Enabled,
-	}
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before slug check",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
 
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before slug check",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
+		// Check if group exists
+		if _, err := s.repo.FindBySlugGroup(req.Path); err != nil {
+			logger.GetLogger().Warn("Service: API group not found for cron",
+				zap.String("path", req.Path),
+			)
+			return http.StatusNotFound, errors.New("API Group with this slug not found")
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.CreateGroupCron(ctx, apiGroupCron); err != nil {
+			logger.GetLogger().Error("Service: Failed to create API group cron",
+				zap.String("path", req.Path),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group cron created successfully",
+			zap.String("path", req.Path),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	// Check if group exists
-	if _, err := s.repo.FindBySlugGroup(req.Slug); err != nil {
-		logger.GetLogger().Warn("Service: API group not found for cron",
-			zap.String("slug", req.Slug),
-		)
-		return http.StatusNotFound, errors.New("API Group with this slug not found")
-	}
-
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	if err := s.repo.CreateGroupCron(ctx, apiGroupCron); err != nil {
-		logger.GetLogger().Error("Service: Failed to create API group cron",
-			zap.String("slug", req.Slug),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group cron created successfully",
-		zap.String("slug", req.Slug),
-	)
-
-	return http.StatusCreated, nil
+		return http.StatusCreated, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group cron functions are disabled")
 }
@@ -330,9 +346,11 @@ func (s *APIConfigService) UpdateConfig(ctx context.Context, id uint, req dto.AP
 	queryParamsJSON, _ := json.Marshal(req.QueryParams)
 	bodyJSON, _ := json.Marshal(req.Body)
 	variablesJSON, _ := json.Marshal(req.Variables)
+	basicAuthUsersJSON, _ := json.Marshal(req.BasicAuthUsers)
+	apiKeysJSON, _ := json.Marshal(req.APIKeys)
 
 	apiConfig := &model.APIConfig{
-		Slug:         req.Slug,
+		Path:         req.Path,
 		Method:       req.Method,
 		URLConfigID:  req.URLConfigID,
 		URI:          req.URI,
@@ -346,6 +364,19 @@ func (s *APIConfigService) UpdateConfig(ctx context.Context, id uint, req dto.AP
 		Manipulation: req.Manipulation,
 		Description:  req.Description,
 		IsAdmin:      req.IsAdmin,
+		// Auth Fields
+		AuthType:         req.AuthType,
+		AuthRequired:     req.AuthRequired,
+		AuthGRPCConfigID: req.AuthGRPCConfigID,
+		JWTSecretKey:     req.JWTSecretKey,
+		JWTIssuer:        req.JWTIssuer,
+		JWTAudience:      req.JWTAudience,
+		JWTAlgorithm:     req.JWTAlgorithm,
+		JWTExpiration:    req.JWTExpiration,
+		BasicAuthUsers:   basicAuthUsersJSON,
+		APIKeyHeader:     req.APIKeyHeader,
+		APIKeyLocation:   req.APIKeyLocation,
+		APIKeys:          apiKeysJSON,
 	}
 	apiConfig.ID = id
 
@@ -354,9 +385,9 @@ func (s *APIConfigService) UpdateConfig(ctx context.Context, id uint, req dto.AP
 		return http.StatusNotFound, errors.New("API config not found")
 	}
 
-	if existing.Slug != req.Slug {
-		if _, err := s.repo.FindBySlugConfig(ctx, req.Slug); err == nil {
-			return http.StatusConflict, errors.New("API config with this slug already exists")
+	if existing.Path != req.Path || existing.Method != req.Method {
+		if _, err := s.repo.FindByPathAndMethodConfig(ctx, req.Path, req.Method); err == nil {
+			return http.StatusConflict, errors.New("API config with this path and method already exists")
 		}
 	}
 
@@ -378,29 +409,29 @@ func (s *APIConfigService) UpdateConfig(ctx context.Context, id uint, req dto.AP
 // DISABLED: Group update function
 func (s *APIConfigService) UpdateGroup(id uint, req dto.APIGroupRequest) (int, error) {
 	/*
-	apiGroup := &model.APIGroup{
-		Slug:    req.Slug,
-		Name:    req.Name,
-		IsAdmin: req.IsAdmin,
-	}
-	apiGroup.ID = id
-
-	existing, err := s.repo.GetByIDGroup(id)
-	if err != nil || existing == nil {
-		return http.StatusNotFound, errors.New("API Group not found")
-	}
-
-	if existing.Slug != req.Slug {
-		if _, err := s.repo.FindBySlugGroup(req.Slug); err == nil {
-			return http.StatusConflict, errors.New("API Group with this slug already exists")
+		apiGroup := &model.APIGroup{
+			Path:    req.Path,
+			Name:    req.Name,
+			IsAdmin: req.IsAdmin,
 		}
-	}
+		apiGroup.ID = id
 
-	if err := s.repo.UpdateGroup(apiGroup); err != nil {
-		return http.StatusInternalServerError, err
-	}
+		existing, err := s.repo.GetByIDGroup(id)
+		if err != nil || existing == nil {
+			return http.StatusNotFound, errors.New("API Group not found")
+		}
 
-	return http.StatusOK, nil
+		if existing.Path != req.Path {
+			if _, err := s.repo.FindBySlugGroup(req.Path); err == nil {
+				return http.StatusConflict, errors.New("API Group with this slug already exists")
+			}
+		}
+
+		if err := s.repo.UpdateGroup(apiGroup); err != nil {
+			return http.StatusInternalServerError, err
+		}
+
+		return http.StatusOK, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -408,26 +439,26 @@ func (s *APIConfigService) UpdateGroup(id uint, req dto.APIGroupRequest) (int, e
 // DISABLED: Group step update function
 func (s *APIConfigService) UpdateGroupStep(id uint, req dto.APIGroupStepRequest) (int, error) {
 	/*
-	variablesJSON, _ := json.Marshal(req.Variables)
-	groupStep := &model.APIGroupStep{
-		GroupID:     req.GroupID,
-		APIConfigID: req.APIConfigID,
-		OrderIndex:  req.OrderIndex,
-		Alias:       req.Alias,
-		Variables:   variablesJSON,
-	}
-	groupStep.ID = id
+		variablesJSON, _ := json.Marshal(req.Variables)
+		groupStep := &model.APIGroupStep{
+			GroupID:     req.GroupID,
+			APIConfigID: req.APIConfigID,
+			OrderIndex:  req.OrderIndex,
+			Alias:       req.Alias,
+			Variables:   variablesJSON,
+		}
+		groupStep.ID = id
 
-	existing, err := s.repo.GetByIDGroupStep(context.Background(), id)
-	if err != nil || existing == nil {
-		return http.StatusNotFound, errors.New("API Group Step not found")
-	}
+		existing, err := s.repo.GetByIDGroupStep(context.Background(), id)
+		if err != nil || existing == nil {
+			return http.StatusNotFound, errors.New("API Group Step not found")
+		}
 
-	if err := s.repo.UpdateGroupStep(groupStep); err != nil {
-		return http.StatusInternalServerError, err
-	}
+		if err := s.repo.UpdateGroupStep(groupStep); err != nil {
+			return http.StatusInternalServerError, err
+		}
 
-	return http.StatusOK, nil
+		return http.StatusOK, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group step functions are disabled")
 }
@@ -435,21 +466,21 @@ func (s *APIConfigService) UpdateGroupStep(id uint, req dto.APIGroupStepRequest)
 // DISABLED: Group cron update function
 func (s *APIConfigService) UpdateGroupCron(id uint, req dto.APIGroupCronRequest) (int, error) {
 	/*
-	apiGroupCron := &model.APIGroupCron{
-		Slug:     req.Slug,
-		Schedule: req.Schedule,
-		Enabled:  req.Enabled,
-	}
-	apiGroupCron.ID = id
-	existing, err := s.repo.GetByIDGroupCron(context.Background(), id)
-	if err != nil || existing == nil {
-		return http.StatusNotFound, errors.New("API Group Cron not found")
-	}
+		apiGroupCron := &model.APIGroupCron{
+			Slug:     req.Path,
+			Schedule: req.Schedule,
+			Enabled:  req.Enabled,
+		}
+		apiGroupCron.ID = id
+		existing, err := s.repo.GetByIDGroupCron(context.Background(), id)
+		if err != nil || existing == nil {
+			return http.StatusNotFound, errors.New("API Group Cron not found")
+		}
 
-	if err := s.repo.UpdateGroupCron(apiGroupCron); err != nil {
-		return http.StatusInternalServerError, err
-	}
-	return http.StatusOK, nil
+		if err := s.repo.UpdateGroupCron(apiGroupCron); err != nil {
+			return http.StatusInternalServerError, err
+		}
+		return http.StatusOK, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group cron functions are disabled")
 }
@@ -515,58 +546,58 @@ func (s *APIConfigService) DeleteConfig(ctx context.Context, id uint) (int, erro
 // DISABLED: Group deletion function
 func (s *APIConfigService) DeleteGroup(ctx context.Context, id uint) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before deleting API group",
-			zap.Uint("group_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before deleting API group",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Deleting API group",
-		zap.Uint("group_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before group check",
-			zap.Uint("group_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	// Check if group exists
-	if _, err := s.repo.GetByIDGroup(id); err != nil {
-		logger.GetLogger().Warn("Service: API group not found for deletion",
+		logger.GetLogger().Info("Service: Deleting API group",
 			zap.Uint("group_id", id),
 		)
-		return http.StatusNotFound, errors.New("API Group not found")
-	}
 
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before group check",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		// Check if group exists
+		if _, err := s.repo.GetByIDGroup(id); err != nil {
+			logger.GetLogger().Warn("Service: API group not found for deletion",
+				zap.Uint("group_id", id),
+			)
+			return http.StatusNotFound, errors.New("API Group not found")
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.DeleteGroup(ctx, id); err != nil {
+			logger.GetLogger().Error("Service: Failed to delete API group",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group deleted successfully",
 			zap.Uint("group_id", id),
-			zap.Error(err),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	if err := s.repo.DeleteGroup(ctx, id); err != nil {
-		logger.GetLogger().Error("Service: Failed to delete API group",
-			zap.Uint("group_id", id),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group deleted successfully",
-		zap.Uint("group_id", id),
-	)
-
-	return http.StatusNoContent, nil
+		return http.StatusNoContent, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -574,58 +605,58 @@ func (s *APIConfigService) DeleteGroup(ctx context.Context, id uint) (int, error
 // DISABLED: Group step deletion function
 func (s *APIConfigService) DeleteGroupStep(ctx context.Context, id uint) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before deleting API group step",
-			zap.Uint("step_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before deleting API group step",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Deleting API group step",
-		zap.Uint("step_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before step check",
-			zap.Uint("step_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	// Check if step exists
-	if _, err := s.repo.GetByIDGroupStep(context.Background(), id); err != nil {
-		logger.GetLogger().Warn("Service: API group step not found for deletion",
+		logger.GetLogger().Info("Service: Deleting API group step",
 			zap.Uint("step_id", id),
 		)
-		return http.StatusNotFound, errors.New("API Group Step not found")
-	}
 
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before step check",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		// Check if step exists
+		if _, err := s.repo.GetByIDGroupStep(context.Background(), id); err != nil {
+			logger.GetLogger().Warn("Service: API group step not found for deletion",
+				zap.Uint("step_id", id),
+			)
+			return http.StatusNotFound, errors.New("API Group Step not found")
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.DeleteGroupStep(ctx, id); err != nil {
+			logger.GetLogger().Error("Service: Failed to delete API group step",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group step deleted successfully",
 			zap.Uint("step_id", id),
-			zap.Error(err),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	if err := s.repo.DeleteGroupStep(ctx, id); err != nil {
-		logger.GetLogger().Error("Service: Failed to delete API group step",
-			zap.Uint("step_id", id),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group step deleted successfully",
-		zap.Uint("step_id", id),
-	)
-
-	return http.StatusNoContent, nil
+		return http.StatusNoContent, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group step functions are disabled")
 }
@@ -633,58 +664,58 @@ func (s *APIConfigService) DeleteGroupStep(ctx context.Context, id uint) (int, e
 // DISABLED: Group cron deletion function
 func (s *APIConfigService) DeleteGroupCron(ctx context.Context, id uint) (int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before deleting API group cron",
-			zap.Uint("cron_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before deleting API group cron",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Deleting API group cron",
-		zap.Uint("cron_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before cron check",
-			zap.Uint("cron_id", id),
-			zap.Error(err),
-		)
-		return http.StatusRequestTimeout, err
-	}
-
-	// Check if cron exists
-	if _, err := s.repo.GetByIDGroupCron(context.Background(), id); err != nil {
-		logger.GetLogger().Warn("Service: API group cron not found for deletion",
+		logger.GetLogger().Info("Service: Deleting API group cron",
 			zap.Uint("cron_id", id),
 		)
-		return http.StatusNotFound, errors.New("API Group Cron not found")
-	}
 
-	// Check context before database operation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before cron check",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		// Check if cron exists
+		if _, err := s.repo.GetByIDGroupCron(context.Background(), id); err != nil {
+			logger.GetLogger().Warn("Service: API group cron not found for deletion",
+				zap.Uint("cron_id", id),
+			)
+			return http.StatusNotFound, errors.New("API Group Cron not found")
+		}
+
+		// Check context before database operation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return http.StatusRequestTimeout, err
+		}
+
+		if err := s.repo.DeleteGroupCron(ctx, id); err != nil {
+			logger.GetLogger().Error("Service: Failed to delete API group cron",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return http.StatusInternalServerError, err
+		}
+
+		logger.GetLogger().Info("Service: API group cron deleted successfully",
 			zap.Uint("cron_id", id),
-			zap.Error(err),
 		)
-		return http.StatusRequestTimeout, err
-	}
 
-	if err := s.repo.DeleteGroupCron(ctx, id); err != nil {
-		logger.GetLogger().Error("Service: Failed to delete API group cron",
-			zap.Uint("cron_id", id),
-			zap.Error(err),
-		)
-		return http.StatusInternalServerError, err
-	}
-
-	logger.GetLogger().Info("Service: API group cron deleted successfully",
-		zap.Uint("cron_id", id),
-	)
-
-	return http.StatusNoContent, nil
+		return http.StatusNoContent, nil
 	*/
 	return http.StatusNotImplemented, errors.New("Group cron functions are disabled")
 }
@@ -755,22 +786,22 @@ func (s *APIConfigService) GetByIDConfig(ctx context.Context, id uint) (*dto.API
 	}
 
 	resp := &dto.APIConfigResponse{
-		ID:           res.ID,
-		Slug:         res.Slug,
-		Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
-		Method:       res.Method,
-		URLConfigID:  res.URLConfigID,
-		URI:          res.URI,
-		URL:          completeURL,
+		ID:          res.ID,
+		Path:        res.Path,
+		Protocol:    res.URLConfig.Protocol, // Get protocol from URLConfig
+		Method:      res.Method,
+		URLConfigID: res.URLConfigID,
+		URI:         res.URI,
+		URL:         completeURL,
 		URLConfig: dto.URLConfigResponse{
-			ID:        res.URLConfig.ID,
-			Nama:      res.URLConfig.Nama,
-			Protocol:  res.URLConfig.Protocol,
-			URL:       res.URLConfig.URL,
-			Deskripsi: res.URLConfig.Deskripsi,
-			IsActive:  res.URLConfig.IsActive,
+			ID:          res.URLConfig.ID,
+			Nama:        res.URLConfig.Nama,
+			Protocol:    res.URLConfig.Protocol,
+			URL:         res.URLConfig.URL,
+			Deskripsi:   res.URLConfig.Deskripsi,
+			IsActive:    res.URLConfig.IsActive,
 			GRPCService: getStringValue(res.URLConfig.GRPCService),
-					ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
+			ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
 			TLSEnabled:  res.URLConfig.TLSEnabled,
 		},
 		Headers:      headers,
@@ -783,12 +814,35 @@ func (s *APIConfigService) GetByIDConfig(ctx context.Context, id uint) (*dto.API
 		Manipulation: res.Manipulation,
 		Description:  res.Description,
 		IsAdmin:      res.IsAdmin,
+
+		// Authentication fields
+		AuthType:         res.AuthType,
+		AuthRequired:     res.AuthRequired,
+		AuthGRPCConfigID: res.AuthGRPCConfigID,
+		JWTSecretKey:     res.JWTSecretKey,
+		JWTIssuer:        res.JWTIssuer,
+		JWTAudience:      res.JWTAudience,
+		JWTAlgorithm:     res.JWTAlgorithm,
+		JWTExpiration:    res.JWTExpiration,
+		APIKeyHeader:     res.APIKeyHeader,
+		APIKeyLocation:   res.APIKeyLocation,
 	}
+
+	// Unmarshal Auth JSON fields (same as GetAllConfig)
+	var basicAuthUsers []dto.BasicAuthUser
+	var apiKeys []dto.APIKey
+	_ = json.Unmarshal(res.BasicAuthUsers, &basicAuthUsers)
+	_ = json.Unmarshal(res.APIKeys, &apiKeys)
+	resp.BasicAuthUsers = basicAuthUsers
+	resp.APIKeys = apiKeys
 
 	logger.GetLogger().Info("Service: API config retrieved successfully",
 		zap.Uint("config_id", id),
-		zap.String("slug", res.Slug),
+		zap.String("path", res.Path),
 		zap.String("url", res.URLConfig.URL),
+		zap.String("auth_type", res.AuthType),
+		zap.Int("basic_auth_users_count", len(basicAuthUsers)),
+		zap.Int("api_keys_count", len(apiKeys)),
 	)
 
 	return resp, http.StatusOK, nil
@@ -797,49 +851,49 @@ func (s *APIConfigService) GetByIDConfig(ctx context.Context, id uint) (*dto.API
 // DISABLED: Group retrieval by ID function
 func (s *APIConfigService) GetByIDGroup(ctx context.Context, id uint) (*dto.APIGroupResponse, int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before getting API group",
-			zap.Uint("group_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before getting API group",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Getting API group",
-		zap.Uint("group_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.Uint("group_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
-
-	res, err := s.repo.GetByIDGroup(id)
-	if err != nil {
-		logger.GetLogger().Warn("Service: API group not found",
+		logger.GetLogger().Info("Service: Getting API group",
 			zap.Uint("group_id", id),
 		)
-		return nil, http.StatusNotFound, errors.New("API Group not found")
-	}
 
-	resp := &dto.APIGroupResponse{
-		ID:      res.ID,
-		Slug:    res.Slug,
-		Name:    res.Name,
-		IsAdmin: res.IsAdmin,
-	}
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("group_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: API group retrieved successfully",
-		zap.Uint("group_id", id),
-		zap.String("slug", res.Slug),
-	)
+		res, err := s.repo.GetByIDGroup(id)
+		if err != nil {
+			logger.GetLogger().Warn("Service: API group not found",
+				zap.Uint("group_id", id),
+			)
+			return nil, http.StatusNotFound, errors.New("API Group not found")
+		}
 
-	return resp, http.StatusOK, nil
+		resp := &dto.APIGroupResponse{
+			ID:      res.ID,
+			Path:    res.Path,
+			Name:    res.Name,
+			IsAdmin: res.IsAdmin,
+		}
+
+		logger.GetLogger().Info("Service: API group retrieved successfully",
+			zap.Uint("group_id", id),
+			zap.String("path", res.Path),
+		)
+
+		return resp, http.StatusOK, nil
 	*/
 	return nil, http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -847,54 +901,54 @@ func (s *APIConfigService) GetByIDGroup(ctx context.Context, id uint) (*dto.APIG
 // DISABLED: Group step retrieval by ID function
 func (s *APIConfigService) GetByIDGroupStep(ctx context.Context, id uint) (*dto.APIGroupStepResponse, int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before getting API group step",
-			zap.Uint("step_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before getting API group step",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Getting API group step",
-		zap.Uint("step_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.Uint("step_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
-
-	res, err := s.repo.GetByIDGroupStep(ctx, id)
-	if err != nil {
-		logger.GetLogger().Warn("Service: API group step not found",
+		logger.GetLogger().Info("Service: Getting API group step",
 			zap.Uint("step_id", id),
 		)
-		return nil, http.StatusNotFound, errors.New("API Group Step not found")
-	}
 
-	var variables map[string]interface{}
-	_ = json.Unmarshal(res.Variables, &variables)
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("step_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	resp := &dto.APIGroupStepResponse{
-		ID:          res.ID,
-		GroupID:     res.GroupID,
-		APIConfigID: res.APIConfigID,
-		OrderIndex:  res.OrderIndex,
-		Alias:       res.Alias,
-		Variables:   variables,
-	}
+		res, err := s.repo.GetByIDGroupStep(ctx, id)
+		if err != nil {
+			logger.GetLogger().Warn("Service: API group step not found",
+				zap.Uint("step_id", id),
+			)
+			return nil, http.StatusNotFound, errors.New("API Group Step not found")
+		}
 
-	logger.GetLogger().Info("Service: API group step retrieved successfully",
-		zap.Uint("step_id", id),
-		zap.String("alias", res.Alias),
-	)
+		var variables map[string]interface{}
+		_ = json.Unmarshal(res.Variables, &variables)
 
-	return resp, http.StatusOK, nil
+		resp := &dto.APIGroupStepResponse{
+			ID:          res.ID,
+			GroupID:     res.GroupID,
+			APIConfigID: res.APIConfigID,
+			OrderIndex:  res.OrderIndex,
+			Alias:       res.Alias,
+			Variables:   variables,
+		}
+
+		logger.GetLogger().Info("Service: API group step retrieved successfully",
+			zap.Uint("step_id", id),
+			zap.String("alias", res.Alias),
+		)
+
+		return resp, http.StatusOK, nil
 	*/
 	return nil, http.StatusNotImplemented, errors.New("Group step functions are disabled")
 }
@@ -902,49 +956,49 @@ func (s *APIConfigService) GetByIDGroupStep(ctx context.Context, id uint) (*dto.
 // DISABLED: Group cron retrieval by ID function
 func (s *APIConfigService) GetByIDGroupCron(ctx context.Context, id uint) (*dto.APIGroupCronResponse, int, error) {
 	/*
-	// Check context cancellation first
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before getting API group cron",
-			zap.Uint("cron_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
+		// Check context cancellation first
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before getting API group cron",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: Getting API group cron",
-		zap.Uint("cron_id", id),
-	)
-
-	// Check context before expensive database query
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before database operation",
-			zap.Uint("cron_id", id),
-			zap.Error(err),
-		)
-		return nil, http.StatusRequestTimeout, err
-	}
-
-	res, err := s.repo.GetByIDGroupCron(ctx, id)
-	if err != nil {
-		logger.GetLogger().Warn("Service: API group cron not found",
+		logger.GetLogger().Info("Service: Getting API group cron",
 			zap.Uint("cron_id", id),
 		)
-		return nil, http.StatusNotFound, errors.New("API Group Cron not found")
-	}
 
-	resp := &dto.APIGroupCronResponse{
-		ID:       res.ID,
-		Slug:     res.Slug,
-		Schedule: res.Schedule,
-		Enabled:  res.Enabled,
-	}
+		// Check context before expensive database query
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before database operation",
+				zap.Uint("cron_id", id),
+				zap.Error(err),
+			)
+			return nil, http.StatusRequestTimeout, err
+		}
 
-	logger.GetLogger().Info("Service: API group cron retrieved successfully",
-		zap.Uint("cron_id", id),
-		zap.String("slug", res.Slug),
-	)
+		res, err := s.repo.GetByIDGroupCron(ctx, id)
+		if err != nil {
+			logger.GetLogger().Warn("Service: API group cron not found",
+				zap.Uint("cron_id", id),
+			)
+			return nil, http.StatusNotFound, errors.New("API Group Cron not found")
+		}
 
-	return resp, http.StatusOK, nil
+		resp := &dto.APIGroupCronResponse{
+			ID:       res.ID,
+			Slug:     res.Path,
+			Schedule: res.Schedule,
+			Enabled:  res.Enabled,
+		}
+
+		logger.GetLogger().Info("Service: API group cron retrieved successfully",
+			zap.Uint("cron_id", id),
+			zap.String("path", res.Path),
+		)
+
+		return resp, http.StatusOK, nil
 	*/
 	return nil, http.StatusNotImplemented, errors.New("Group cron functions are disabled")
 }
@@ -952,9 +1006,8 @@ func (s *APIConfigService) GetByIDGroupCron(ctx context.Context, id uint) (*dto.
 // End Get By ID
 
 // Start Get By Slug
-// DISABLED: Config retrieval by slug function
+// GetBySlugConfig retrieves API config by path slug (used by RefreshSingle for route registry updates)
 func (s *APIConfigService) GetBySlugConfig(ctx context.Context, slug string) (*dto.APIConfigResponse, int, error) {
-	/*
 	// Check context cancellation
 	if err := ctx.Err(); err != nil {
 		logger.GetLogger().Warn("Service: Context cancelled before getting API config by slug",
@@ -964,7 +1017,7 @@ func (s *APIConfigService) GetBySlugConfig(ctx context.Context, slug string) (*d
 		return nil, http.StatusRequestTimeout, err
 	}
 
-	res, err := s.repo.FindBySlugConfig(ctx, slug)
+	res, err := s.repo.FindByPathConfig(ctx, slug)
 	if err != nil {
 		return nil, http.StatusNotFound, errors.New("API config not found")
 	}
@@ -1002,21 +1055,21 @@ func (s *APIConfigService) GetBySlugConfig(ctx context.Context, slug string) (*d
 
 	resp := &dto.APIConfigResponse{
 		ID:           res.ID,
-		Slug:         res.Slug,
+		Path:         res.Path,
 		Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
 		Method:       res.Method,
 		URLConfigID:  res.URLConfigID,
 		URI:          res.URI,
 		URL:          completeURL,
 		URLConfig: dto.URLConfigResponse{
-			ID:        res.URLConfig.ID,
-			Nama:      res.URLConfig.Nama,
-			Protocol:  res.URLConfig.Protocol,
-			URL:       res.URLConfig.URL,
-			Deskripsi: res.URLConfig.Deskripsi,
-			IsActive:  res.URLConfig.IsActive,
+			ID:          res.URLConfig.ID,
+			Nama:        res.URLConfig.Nama,
+			Protocol:    res.URLConfig.Protocol,
+			URL:         res.URLConfig.URL,
+			Deskripsi:   res.URLConfig.Deskripsi,
+			IsActive:    res.URLConfig.IsActive,
 			GRPCService: getStringValue(res.URLConfig.GRPCService),
-					ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
+			ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
 			TLSEnabled:  res.URLConfig.TLSEnabled,
 		},
 		Headers:      headers,
@@ -1029,39 +1082,46 @@ func (s *APIConfigService) GetBySlugConfig(ctx context.Context, slug string) (*d
 		Manipulation: res.Manipulation,
 		Description:  res.Description,
 		IsAdmin:      res.IsAdmin,
+		// Auth Fields
+		AuthType:         res.AuthType,
+		AuthRequired:     res.AuthRequired,
+		AuthGRPCConfigID: res.AuthGRPCConfigID,
+		JWTSecretKey:     res.JWTSecretKey,
+		JWTIssuer:        res.JWTIssuer,
+		JWTAudience:      res.JWTAudience,
+		JWTAlgorithm:     res.JWTAlgorithm,
+		JWTExpiration:    res.JWTExpiration,
+		APIKeyHeader:     res.APIKeyHeader,
+		APIKeyLocation:   res.APIKeyLocation,
 	}
+
+	// Unmarshal Auth JSON fields
+	var basicAuthUsers []dto.BasicAuthUser
+	var apiKeys []dto.APIKey
+	_ = json.Unmarshal(res.BasicAuthUsers, &basicAuthUsers)
+	_ = json.Unmarshal(res.APIKeys, &apiKeys)
+	resp.BasicAuthUsers = basicAuthUsers
+	resp.APIKeys = apiKeys
 
 	return resp, http.StatusOK, nil
-	*/
-	return nil, http.StatusNotImplemented, errors.New("Config retrieval by slug is disabled")
 }
 
-// DISABLED: Config retrieval by URI function
-func (s *APIConfigService) GetByURIConfig(ctx context.Context, uri, method string) (*dto.APIConfigResponse, error) {
-	/*
+// GetByPathAndMethodConfig retrieves API config by path and method combination
+// Used by RefreshSingle for route registry updates when multiple methods exist per path
+func (s *APIConfigService) GetByPathAndMethodConfig(ctx context.Context, path, method string) (*dto.APIConfigResponse, int, error) {
 	// Check context cancellation
 	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before getting API config by URI",
-			zap.String("uri", uri),
+		logger.GetLogger().Warn("Service: Context cancelled before getting API config by path and method",
+			zap.String("path", path),
 			zap.String("method", method),
 			zap.Error(err),
 		)
-		return nil, ctx.Err()
+		return nil, http.StatusRequestTimeout, err
 	}
 
-	logger.GetLogger().Info("Service: Looking up API config by URI",
-		zap.String("uri", uri),
-		zap.String("method", method),
-	)
-
-	res, err := s.repo.FindByURIConfig(ctx, uri, method)
+	res, err := s.repo.FindByPathAndMethodConfig(ctx, path, method)
 	if err != nil {
-		logger.GetLogger().Debug("No API config found for URI",
-			zap.String("uri", uri),
-			zap.String("method", method),
-			zap.Error(err),
-		)
-		return nil, err
+		return nil, http.StatusNotFound, errors.New("API config not found")
 	}
 
 	var headers map[string]string
@@ -1089,51 +1149,160 @@ func (s *APIConfigService) GetByURIConfig(ctx context.Context, uri, method strin
 	// Combine base URL with URI to get complete URL
 	completeURL := res.URLConfig.URL
 	if res.URI != "" {
-		// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
 		baseURL := strings.TrimSuffix(res.URLConfig.URL, "/")
 		uri := strings.TrimPrefix(res.URI, "/")
 		completeURL = baseURL + "/" + uri
 	}
 
 	resp := &dto.APIConfigResponse{
-		ID:           res.ID,
-		Slug:         res.Slug,
-		Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
-		Method:       res.Method,
-		URLConfigID:  res.URLConfigID,
-		URI:          res.URI,
-		URL:          completeURL,
+		ID:          res.ID,
+		Path:        res.Path,
+		Protocol:    res.URLConfig.Protocol,
+		Method:      res.Method,
+		URLConfigID: res.URLConfigID,
+		URI:         res.URI,
+		URL:         completeURL,
 		URLConfig: dto.URLConfigResponse{
-			ID:        res.URLConfig.ID,
-			Nama:      res.URLConfig.Nama,
-			Protocol:  res.URLConfig.Protocol,
-			URL:       res.URLConfig.URL,
-			Deskripsi: res.URLConfig.Deskripsi,
-			IsActive:  res.URLConfig.IsActive,
+			ID:          res.URLConfig.ID,
+			Nama:        res.URLConfig.Nama,
+			Protocol:    res.URLConfig.Protocol,
+			URL:         res.URLConfig.URL,
+			Deskripsi:   res.URLConfig.Deskripsi,
+			IsActive:    res.URLConfig.IsActive,
 			GRPCService: getStringValue(res.URLConfig.GRPCService),
-					ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
+			ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
 			TLSEnabled:  res.URLConfig.TLSEnabled,
 		},
-		Headers:      headers,
-		QueryParams:  queryParams,
-		Body:         body,
-		Variables:    variables,
-		MaxRetries:   res.MaxRetries,
-		RetryDelay:   res.RetryDelay,
-		Timeout:      res.Timeout,
-		Manipulation: res.Manipulation,
-		Description:  res.Description,
-		IsAdmin:      res.IsAdmin,
+		Headers:          headers,
+		QueryParams:      queryParams,
+		Body:             body,
+		Variables:        variables,
+		MaxRetries:       res.MaxRetries,
+		RetryDelay:       res.RetryDelay,
+		Timeout:          res.Timeout,
+		Manipulation:     res.Manipulation,
+		Description:      res.Description,
+		IsAdmin:          res.IsAdmin,
+		AuthType:         res.AuthType,
+		AuthRequired:     res.AuthRequired,
+		AuthGRPCConfigID: res.AuthGRPCConfigID,
+		JWTSecretKey:     res.JWTSecretKey,
+		JWTIssuer:        res.JWTIssuer,
+		JWTAudience:      res.JWTAudience,
+		JWTAlgorithm:     res.JWTAlgorithm,
+		JWTExpiration:    res.JWTExpiration,
+		APIKeyHeader:     res.APIKeyHeader,
+		APIKeyLocation:   res.APIKeyLocation,
 	}
 
-	logger.GetLogger().Info("Service: API config found for URI",
-		zap.String("slug", res.Slug),
-		zap.String("uri", uri),
-		zap.String("method", method),
-		zap.String("protocol", resp.Protocol),
-	)
+	var basicAuthUsers []dto.BasicAuthUser
+	var apiKeys []dto.APIKey
+	_ = json.Unmarshal(res.BasicAuthUsers, &basicAuthUsers)
+	_ = json.Unmarshal(res.APIKeys, &apiKeys)
+	resp.BasicAuthUsers = basicAuthUsers
+	resp.APIKeys = apiKeys
 
-	return resp, nil
+	return resp, http.StatusOK, nil
+}
+
+// DISABLED: Config retrieval by URI function
+func (s *APIConfigService) GetByURIConfig(ctx context.Context, uri, method string) (*dto.APIConfigResponse, error) {
+	/*
+		// Check context cancellation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before getting API config by URI",
+				zap.String("uri", uri),
+				zap.String("method", method),
+				zap.Error(err),
+			)
+			return nil, ctx.Err()
+		}
+
+		logger.GetLogger().Info("Service: Looking up API config by URI",
+			zap.String("uri", uri),
+			zap.String("method", method),
+		)
+
+		res, err := s.repo.FindByURIConfig(ctx, uri, method)
+		if err != nil {
+			logger.GetLogger().Debug("No API config found for URI",
+				zap.String("uri", uri),
+				zap.String("method", method),
+				zap.Error(err),
+			)
+			return nil, err
+		}
+
+		var headers map[string]string
+		var queryParams map[string]string
+		var variables map[string]dto.Variable
+		var rawBody interface{}
+
+		_ = json.Unmarshal(res.Headers, &headers)
+		_ = json.Unmarshal(res.QueryParams, &queryParams)
+		_ = json.Unmarshal(res.Variables, &variables)
+
+		if err := json.Unmarshal(res.Body, &rawBody); err != nil {
+			// error handling jika perlu
+		}
+
+		if bodyStr, ok := rawBody.(string); ok {
+			var bodyObj map[string]interface{}
+			if err := json.Unmarshal([]byte(bodyStr), &bodyObj); err == nil {
+				rawBody = bodyObj
+			}
+		}
+
+		body, _ := rawBody.(map[string]interface{})
+
+		// Combine base URL with URI to get complete URL
+		completeURL := res.URLConfig.URL
+		if res.URI != "" {
+			// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
+			baseURL := strings.TrimSuffix(res.URLConfig.URL, "/")
+			uri := strings.TrimPrefix(res.URI, "/")
+			completeURL = baseURL + "/" + uri
+		}
+
+		resp := &dto.APIConfigResponse{
+			ID:           res.ID,
+			Path:         res.Path,
+			Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
+			Method:       res.Method,
+			URLConfigID:  res.URLConfigID,
+			URI:          res.URI,
+			URL:          completeURL,
+			URLConfig: dto.URLConfigResponse{
+				ID:        res.URLConfig.ID,
+				Nama:      res.URLConfig.Nama,
+				Protocol:  res.URLConfig.Protocol,
+				URL:       res.URLConfig.URL,
+				Deskripsi: res.URLConfig.Deskripsi,
+				IsActive:  res.URLConfig.IsActive,
+				GRPCService: getStringValue(res.URLConfig.GRPCService),
+						ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
+				TLSEnabled:  res.URLConfig.TLSEnabled,
+			},
+			Headers:      headers,
+			QueryParams:  queryParams,
+			Body:         body,
+			Variables:    variables,
+			MaxRetries:   res.MaxRetries,
+			RetryDelay:   res.RetryDelay,
+			Timeout:      res.Timeout,
+			Manipulation: res.Manipulation,
+			Description:  res.Description,
+			IsAdmin:      res.IsAdmin,
+		}
+
+		logger.GetLogger().Info("Service: API config found for URI",
+			zap.String("path", res.Path),
+			zap.String("uri", uri),
+			zap.String("method", method),
+			zap.String("protocol", resp.Protocol),
+		)
+
+		return resp, nil
 	*/
 	return nil, errors.New("Config retrieval by URI is disabled")
 }
@@ -1141,103 +1310,103 @@ func (s *APIConfigService) GetByURIConfig(ctx context.Context, uri, method strin
 // DISABLED: Config retrieval by URI pattern function
 func (s *APIConfigService) GetByURIConfigWithPattern(ctx context.Context, requestURI, method string) (*dto.APIConfigResponse, map[string]string, error) {
 	/*
-	// Check context cancellation
-	if err := ctx.Err(); err != nil {
-		logger.GetLogger().Warn("Service: Context cancelled before getting API config by URI pattern",
-			zap.String("request_uri", requestURI),
-			zap.String("method", method),
-			zap.Error(err),
-		)
-		return nil, nil, ctx.Err()
-	}
-
-	logger.GetLogger().Info("Service: Looking up API config by URI pattern",
-		zap.String("request_uri", requestURI),
-		zap.String("method", method),
-	)
-
-	res, params, err := s.repo.FindByURIConfigWithPattern(ctx, requestURI, method)
-	if err != nil {
-		logger.GetLogger().Debug("No API config found for URI pattern",
-			zap.String("request_uri", requestURI),
-			zap.String("method", method),
-			zap.Error(err),
-		)
-		return nil, nil, err
-	}
-
-	var headers map[string]string
-	var queryParams map[string]string
-	var variables map[string]dto.Variable
-	var rawBody interface{}
-
-	_ = json.Unmarshal(res.Headers, &headers)
-	_ = json.Unmarshal(res.QueryParams, &queryParams)
-	_ = json.Unmarshal(res.Variables, &variables)
-
-	if err := json.Unmarshal(res.Body, &rawBody); err != nil {
-		// error handling jika perlu
-	}
-
-	if bodyStr, ok := rawBody.(string); ok {
-		var bodyObj map[string]interface{}
-		if err := json.Unmarshal([]byte(bodyStr), &bodyObj); err == nil {
-			rawBody = bodyObj
+		// Check context cancellation
+		if err := ctx.Err(); err != nil {
+			logger.GetLogger().Warn("Service: Context cancelled before getting API config by URI pattern",
+				zap.String("request_uri", requestURI),
+				zap.String("method", method),
+				zap.Error(err),
+			)
+			return nil, nil, ctx.Err()
 		}
-	}
 
-	body, _ := rawBody.(map[string]interface{})
+		logger.GetLogger().Info("Service: Looking up API config by URI pattern",
+			zap.String("request_uri", requestURI),
+			zap.String("method", method),
+		)
 
-	// Combine base URL with URI to get complete URL
-	completeURL := res.URLConfig.URL
-	if res.URI != "" {
-		// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
-		baseURL := strings.TrimSuffix(res.URLConfig.URL, "/")
-		uri := strings.TrimPrefix(res.URI, "/")
-		completeURL = baseURL + "/" + uri
-	}
+		res, params, err := s.repo.FindByURIConfigWithPattern(ctx, requestURI, method)
+		if err != nil {
+			logger.GetLogger().Debug("No API config found for URI pattern",
+				zap.String("request_uri", requestURI),
+				zap.String("method", method),
+				zap.Error(err),
+			)
+			return nil, nil, err
+		}
 
-	resp := &dto.APIConfigResponse{
-		ID:           res.ID,
-		Slug:         res.Slug,
-		Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
-		Method:       res.Method,
-		URLConfigID:  res.URLConfigID,
-		URI:          res.URI,
-		URL:          completeURL,
-		URLConfig: dto.URLConfigResponse{
-			ID:        res.URLConfig.ID,
-			Nama:      res.URLConfig.Nama,
-			Protocol:  res.URLConfig.Protocol,
-			URL:       res.URLConfig.URL,
-			Deskripsi: res.URLConfig.Deskripsi,
-			IsActive:  res.URLConfig.IsActive,
-			GRPCService: getStringValue(res.URLConfig.GRPCService),
-					ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
-			TLSEnabled:  res.URLConfig.TLSEnabled,
-		},
-		Headers:      headers,
-		QueryParams:  queryParams,
-		Body:         body,
-		Variables:    variables,
-		MaxRetries:   res.MaxRetries,
-		RetryDelay:   res.RetryDelay,
-		Timeout:      res.Timeout,
-		Manipulation: res.Manipulation,
-		Description:  res.Description,
-		IsAdmin:      res.IsAdmin,
-	}
+		var headers map[string]string
+		var queryParams map[string]string
+		var variables map[string]dto.Variable
+		var rawBody interface{}
 
-	logger.GetLogger().Info("Service: API config found for URI pattern",
-		zap.String("slug", res.Slug),
-		zap.String("config_uri", res.URI),
-		zap.String("request_uri", requestURI),
-		zap.String("method", method),
-		zap.String("protocol", resp.Protocol),
-		zap.Int("matched_params", len(params)),
-	)
+		_ = json.Unmarshal(res.Headers, &headers)
+		_ = json.Unmarshal(res.QueryParams, &queryParams)
+		_ = json.Unmarshal(res.Variables, &variables)
 
-	return resp, params, nil
+		if err := json.Unmarshal(res.Body, &rawBody); err != nil {
+			// error handling jika perlu
+		}
+
+		if bodyStr, ok := rawBody.(string); ok {
+			var bodyObj map[string]interface{}
+			if err := json.Unmarshal([]byte(bodyStr), &bodyObj); err == nil {
+				rawBody = bodyObj
+			}
+		}
+
+		body, _ := rawBody.(map[string]interface{})
+
+		// Combine base URL with URI to get complete URL
+		completeURL := res.URLConfig.URL
+		if res.URI != "" {
+			// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
+			baseURL := strings.TrimSuffix(res.URLConfig.URL, "/")
+			uri := strings.TrimPrefix(res.URI, "/")
+			completeURL = baseURL + "/" + uri
+		}
+
+		resp := &dto.APIConfigResponse{
+			ID:           res.ID,
+			Path:         res.Path,
+			Protocol:     res.URLConfig.Protocol, // Get protocol from URLConfig
+			Method:       res.Method,
+			URLConfigID:  res.URLConfigID,
+			URI:          res.URI,
+			URL:          completeURL,
+			URLConfig: dto.URLConfigResponse{
+				ID:        res.URLConfig.ID,
+				Nama:      res.URLConfig.Nama,
+				Protocol:  res.URLConfig.Protocol,
+				URL:       res.URLConfig.URL,
+				Deskripsi: res.URLConfig.Deskripsi,
+				IsActive:  res.URLConfig.IsActive,
+				GRPCService: getStringValue(res.URLConfig.GRPCService),
+						ProtoFile:   getStringValue(res.URLConfig.ProtoFile),
+				TLSEnabled:  res.URLConfig.TLSEnabled,
+			},
+			Headers:      headers,
+			QueryParams:  queryParams,
+			Body:         body,
+			Variables:    variables,
+			MaxRetries:   res.MaxRetries,
+			RetryDelay:   res.RetryDelay,
+			Timeout:      res.Timeout,
+			Manipulation: res.Manipulation,
+			Description:  res.Description,
+			IsAdmin:      res.IsAdmin,
+		}
+
+		logger.GetLogger().Info("Service: API config found for URI pattern",
+			zap.String("path", res.Path),
+			zap.String("config_uri", res.URI),
+			zap.String("request_uri", requestURI),
+			zap.String("method", method),
+			zap.String("protocol", resp.Protocol),
+			zap.Int("matched_params", len(params)),
+		)
+
+		return resp, params, nil
 	*/
 	return nil, nil, errors.New("Config retrieval by URI pattern is disabled")
 }
@@ -1245,19 +1414,19 @@ func (s *APIConfigService) GetByURIConfigWithPattern(ctx context.Context, reques
 // DISABLED: Group retrieval by slug function
 func (s *APIConfigService) GetBySlugGroup(slug string) (*dto.APIGroupResponse, int, error) {
 	/*
-	res, err := s.repo.FindBySlugGroup(slug)
-	if err != nil {
-		return nil, http.StatusNotFound, errors.New("API Group not found")
-	}
+		res, err := s.repo.FindBySlugGroup(slug)
+		if err != nil {
+			return nil, http.StatusNotFound, errors.New("API Group not found")
+		}
 
-	resp := &dto.APIGroupResponse{
-		ID:      res.ID,
-		Slug:    res.Slug,
-		Name:    res.Name,
-		IsAdmin: res.IsAdmin,
-	}
+		resp := &dto.APIGroupResponse{
+			ID:      res.ID,
+			Path:    res.Path,
+			Name:    res.Name,
+			IsAdmin: res.IsAdmin,
+		}
 
-	return resp, http.StatusOK, nil
+		return resp, http.StatusOK, nil
 	*/
 	return nil, http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -1272,9 +1441,18 @@ func (s *APIConfigService) GetAllConfig(params any) ([]dto.APIConfigResponse, in
 		return nil, 0, 0, http.StatusBadRequest, errors.New("invalid pagination parameters")
 	}
 
-	// Extract core pagination parameters
-	limit := int(paginatedData["limit"].(int64))
-	offset := int(paginatedData["offset"].(int64))
+	// Extract core pagination parameters - handle both int and int64 types
+	var limit, offset int
+	if l, ok := paginatedData["limit"].(int); ok {
+		limit = l
+	} else if l64, ok := paginatedData["limit"].(int64); ok {
+		limit = int(l64)
+	}
+	if o, ok := paginatedData["offset"].(int); ok {
+		offset = o
+	} else if o64, ok := paginatedData["offset"].(int64); ok {
+		offset = int(o64)
+	}
 	search, _ := paginatedData["search"].(string)
 
 	// Extract URL config IDs from filter parameters
@@ -1320,23 +1498,23 @@ func (s *APIConfigService) GetAllConfig(params any) ([]dto.APIConfigResponse, in
 			completeURL = baseURL + "/" + uri
 		}
 
-		res = append(res, dto.APIConfigResponse{
-			ID:           data.ID,
-			Slug:         data.Slug,
-			Protocol:     data.URLConfig.Protocol, // Get protocol from URLConfig
-			Method:       data.Method,
-			URLConfigID:  data.URLConfigID,
-			URI:          data.URI,
-			URL:          completeURL,
+		respItem := dto.APIConfigResponse{
+			ID:          data.ID,
+			Path:        data.Path,
+			Protocol:    data.URLConfig.Protocol, // Get protocol from URLConfig
+			Method:      data.Method,
+			URLConfigID: data.URLConfigID,
+			URI:         data.URI,
+			URL:         completeURL,
 			URLConfig: dto.URLConfigResponse{
-				ID:        data.URLConfig.ID,
-				Nama:      data.URLConfig.Nama,
-				Protocol:  data.URLConfig.Protocol,
-				URL:       data.URLConfig.URL,
-				Deskripsi: data.URLConfig.Deskripsi,
-				IsActive:  data.URLConfig.IsActive,
+				ID:          data.URLConfig.ID,
+				Nama:        data.URLConfig.Nama,
+				Protocol:    data.URLConfig.Protocol,
+				URL:         data.URLConfig.URL,
+				Deskripsi:   data.URLConfig.Deskripsi,
+				IsActive:    data.URLConfig.IsActive,
 				GRPCService: getStringValue(data.URLConfig.GRPCService),
-								ProtoFile:   getStringValue(data.URLConfig.ProtoFile),
+				ProtoFile:   getStringValue(data.URLConfig.ProtoFile),
 				TLSEnabled:  data.URLConfig.TLSEnabled,
 			},
 			Headers:      headers,
@@ -1349,7 +1527,28 @@ func (s *APIConfigService) GetAllConfig(params any) ([]dto.APIConfigResponse, in
 			Manipulation: data.Manipulation,
 			Description:  data.Description,
 			IsAdmin:      data.IsAdmin,
-		})
+			// Auth Fields
+			AuthType:         data.AuthType,
+			AuthRequired:     data.AuthRequired,
+			AuthGRPCConfigID: data.AuthGRPCConfigID,
+			JWTSecretKey:     data.JWTSecretKey,
+			JWTIssuer:        data.JWTIssuer,
+			JWTAudience:      data.JWTAudience,
+			JWTAlgorithm:     data.JWTAlgorithm,
+			JWTExpiration:    data.JWTExpiration,
+			APIKeyHeader:     data.APIKeyHeader,
+			APIKeyLocation:   data.APIKeyLocation,
+		}
+
+		// Unmarshal Auth JSON fields
+		var basicAuthUsers []dto.BasicAuthUser
+		var apiKeys []dto.APIKey
+		_ = json.Unmarshal(data.BasicAuthUsers, &basicAuthUsers)
+		_ = json.Unmarshal(data.APIKeys, &apiKeys)
+		respItem.BasicAuthUsers = basicAuthUsers
+		respItem.APIKeys = apiKeys
+
+		res = append(res, respItem)
 	}
 	return res, total, pageTotal, http.StatusOK, nil
 }
@@ -1357,21 +1556,21 @@ func (s *APIConfigService) GetAllConfig(params any) ([]dto.APIConfigResponse, in
 // DISABLED: Group retrieval all function
 func (s *APIConfigService) GetAllGroup(limit, offset int, search string) ([]dto.APIGroupResponse, int64, int, int, error) {
 	/*
-	pages, total, err := s.repo.GetAllGroup(limit, offset, search)
-	if err != nil {
-		return nil, 0, 0, http.StatusInternalServerError, err
-	}
-	pageTotal := int(math.Ceil(float64(total) / float64(limit)))
-	var res []dto.APIGroupResponse
-	for _, data := range pages {
-		res = append(res, dto.APIGroupResponse{
-			ID:      data.ID,
-			Slug:    data.Slug,
-			Name:    data.Name,
-			IsAdmin: data.IsAdmin,
-		})
-	}
-	return res, total, pageTotal, http.StatusOK, nil
+		pages, total, err := s.repo.GetAllGroup(limit, offset, search)
+		if err != nil {
+			return nil, 0, 0, http.StatusInternalServerError, err
+		}
+		pageTotal := int(math.Ceil(float64(total) / float64(limit)))
+		var res []dto.APIGroupResponse
+		for _, data := range pages {
+			res = append(res, dto.APIGroupResponse{
+				ID:      data.ID,
+				Slug:    data.Slug,
+				Name:    data.Name,
+				IsAdmin: data.IsAdmin,
+			})
+		}
+		return res, total, pageTotal, http.StatusOK, nil
 	*/
 	return nil, 0, 0, http.StatusNotImplemented, errors.New("Group functions are disabled")
 }
@@ -1379,48 +1578,49 @@ func (s *APIConfigService) GetAllGroup(limit, offset int, search string) ([]dto.
 // DISABLED: Group step retrieval all function
 func (s *APIConfigService) GetAllGroupStep(limit, offset int, search string, groupID uint) ([]dto.APIGroupStepResponse, int64, int, int, error) {
 	/*
-	pages, total, err := s.repo.GetAllGroupStep(limit, offset, search, groupID)
-	if err != nil {
-		return nil, 0, 0, http.StatusInternalServerError, err
-	}
-	pageTotal := int(math.Ceil(float64(total) / float64(limit)))
-	var res []dto.APIGroupStepResponse
-	for _, data := range pages {
+		pages, total, err := s.repo.GetAllGroupStep(limit, offset, search, groupID)
+		if err != nil {
+			return nil, 0, 0, http.StatusInternalServerError, err
+		}
+		pageTotal := int(math.Ceil(float64(total) / float64(limit)))
+		var res []dto.APIGroupStepResponse
+		for _, data := range pages {
 
-		var variables map[string]interface{}
-		_ = json.Unmarshal(data.Variables, &variables)
+			var variables map[string]interface{}
+			_ = json.Unmarshal(data.Variables, &variables)
 
-		res = append(res, dto.APIGroupStepResponse{
-			ID:          data.ID,
-			GroupID:     data.GroupID,
-			APIConfigID: data.APIConfigID,
-			OrderIndex:  data.OrderIndex,
-			Alias:       data.Alias,
-			Variables:   variables,
-		})
-	}
-	return res, total, pageTotal, http.StatusOK, nil
+			res = append(res, dto.APIGroupStepResponse{
+				ID:          data.ID,
+				GroupID:     data.GroupID,
+				APIConfigID: data.APIConfigID,
+				OrderIndex:  data.OrderIndex,
+				Alias:       data.Alias,
+				Variables:   variables,
+			})
+		}
+		return res, total, pageTotal, http.StatusOK, nil
 	*/
 	return nil, 0, 0, http.StatusNotImplemented, errors.New("Group step functions are disabled")
 }
+
 // DISABLED: Group cron retrieval all function
 func (s *APIConfigService) GetAllGroupCron(limit, offset int, search, slug string) ([]dto.APIGroupCronResponse, int64, int, int, error) {
 	/*
-	pages, total, err := s.repo.GetAllGroupCron(limit, offset, search, slug)
-	if err != nil {
-		return nil, 0, 0, http.StatusInternalServerError, err
-	}
-	pageTotal := int(math.Ceil(float64(total) / float64(limit)))
-	var res []dto.APIGroupCronResponse
-	for _, data := range pages {
-		res = append(res, dto.APIGroupCronResponse{
-			ID:       data.ID,
-			Slug:     data.Slug,
-			Schedule: data.Schedule,
-			Enabled:  data.Enabled,
-		})
-	}
-	return res, total, pageTotal, http.StatusOK, nil
+		pages, total, err := s.repo.GetAllGroupCron(limit, offset, search, slug)
+		if err != nil {
+			return nil, 0, 0, http.StatusInternalServerError, err
+		}
+		pageTotal := int(math.Ceil(float64(total) / float64(limit)))
+		var res []dto.APIGroupCronResponse
+		for _, data := range pages {
+			res = append(res, dto.APIGroupCronResponse{
+				ID:       data.ID,
+				Slug:     data.Slug,
+				Schedule: data.Schedule,
+				Enabled:  data.Enabled,
+			})
+		}
+		return res, total, pageTotal, http.StatusOK, nil
 	*/
 	return nil, 0, 0, http.StatusNotImplemented, errors.New("Group cron functions are disabled")
 }
@@ -1430,187 +1630,187 @@ func (s *APIConfigService) GetAllGroupCron(limit, offset int, search, slug strin
 // DISABLED: Execute group by slug function
 func (s *APIConfigService) ExecuteBySlug(slug string, input map[string]interface{}) (map[string]interface{}, int, error) {
 	/*
-	logger.GetLogger().Info("Service: Executing API group by slug",
-		zap.String("slug", slug),
-		zap.Any("input", input),
-	)
-
-	group, err := s.repo.FindBySlugGroup(slug)
-	if err != nil {
-		logger.GetLogger().Error("Service: API group not found",
+		logger.GetLogger().Info("Service: Executing API group by slug",
 			zap.String("slug", slug),
-			zap.Error(err),
-		)
-		return nil, http.StatusNotFound, errors.New("API group not found")
-	}
-
-	logger.GetLogger().Info("Service: API group found, executing steps",
-		zap.String("slug", slug),
-		zap.String("group_name", group.Name),
-		zap.Int("steps_count", len(group.Steps)),
-	)
-
-	contextData := map[string]interface{}{
-		"input": input,
-		"steps": map[string]interface{}{},
-	}
-
-	for stepIndex, step := range group.Steps {
-		logger.GetLogger().Info("Service: Executing group step",
-			zap.String("slug", slug),
-			zap.Int("step_index", stepIndex),
-			zap.String("step_alias", step.Alias),
-			zap.Uint("api_config_id", step.APIConfigID),
-			zap.Int("step_order", step.OrderIndex),
+			zap.Any("input", input),
 		)
 
-		config, err := s.repo.GetByIDConfig(step.APIConfigID)
+		group, err := s.repo.FindBySlugGroup(slug)
 		if err != nil {
-			logger.GetLogger().Error("Service: Failed to get API config for step",
+			logger.GetLogger().Error("Service: API group not found",
 				zap.String("slug", slug),
-				zap.Int("step_index", stepIndex),
-				zap.Uint("api_config_id", step.APIConfigID),
 				zap.Error(err),
 			)
-			return nil, http.StatusInternalServerError, fmt.Errorf("failed to get API config: %v", err)
+			return nil, http.StatusNotFound, errors.New("API group not found")
 		}
 
-		// Combine base URL with URI to get complete URL for this step
-		completeURL := config.URLConfig.URL
-		if config.URI != "" {
-			// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
-			baseURL := strings.TrimSuffix(config.URLConfig.URL, "/")
-			uri := strings.TrimPrefix(config.URI, "/")
-			completeURL = baseURL + "/" + uri
+		logger.GetLogger().Info("Service: API group found, executing steps",
+			zap.String("slug", slug),
+			zap.String("group_name", group.Name),
+			zap.Int("steps_count", len(group.Steps)),
+		)
+
+		contextData := map[string]interface{}{
+			"input": input,
+			"steps": map[string]interface{}{},
 		}
 
-		// Render URI if it contains template variables
-		renderedURL := completeURL
-		if strings.Contains(completeURL, "{{") || strings.Contains(completeURL, "${") {
-			rendered, err := integrasi.RenderTemplate(completeURL, contextData)
+		for stepIndex, step := range group.Steps {
+			logger.GetLogger().Info("Service: Executing group step",
+				zap.String("slug", slug),
+				zap.Int("step_index", stepIndex),
+				zap.String("step_alias", step.Alias),
+				zap.Uint("api_config_id", step.APIConfigID),
+				zap.Int("step_order", step.OrderIndex),
+			)
+
+			config, err := s.repo.GetByIDConfig(step.APIConfigID)
 			if err != nil {
-				logger.GetLogger().Error("Service: Failed to render URL template",
+				logger.GetLogger().Error("Service: Failed to get API config for step",
 					zap.String("slug", slug),
 					zap.Int("step_index", stepIndex),
-					zap.String("url", completeURL),
+					zap.Uint("api_config_id", step.APIConfigID),
 					zap.Error(err),
 				)
-				return nil, http.StatusInternalServerError, fmt.Errorf("failed to render URL template: %v", err)
-			}
-			renderedURL = rendered
-		}
-
-		renderedVars := map[string]interface{}{}
-		if len(step.Variables) > 0 {
-			var rawVars map[string]interface{}
-			if err := json.Unmarshal(step.Variables, &rawVars); err != nil {
-				logger.GetLogger().Error("Service: Failed to parse step variables",
-					zap.String("slug", slug),
-					zap.Int("step_index", stepIndex),
-					zap.Error(err),
-				)
-				return nil, http.StatusInternalServerError, fmt.Errorf("failed to parse variables: %v", err)
+				return nil, http.StatusInternalServerError, fmt.Errorf("failed to get API config: %v", err)
 			}
 
-			for key, val := range rawVars {
-				rendered, err := integrasi.RenderTemplate(fmt.Sprint(val), contextData)
+			// Combine base URL with URI to get complete URL for this step
+			completeURL := config.URLConfig.URL
+			if config.URI != "" {
+				// Remove trailing slash from base URL and leading slash from URI to avoid double slashes
+				baseURL := strings.TrimSuffix(config.URLConfig.URL, "/")
+				uri := strings.TrimPrefix(config.URI, "/")
+				completeURL = baseURL + "/" + uri
+			}
+
+			// Render URI if it contains template variables
+			renderedURL := completeURL
+			if strings.Contains(completeURL, "{{") || strings.Contains(completeURL, "${") {
+				rendered, err := integrasi.RenderTemplate(completeURL, contextData)
 				if err != nil {
-					logger.GetLogger().Error("Service: Failed to render template variable",
+					logger.GetLogger().Error("Service: Failed to render URL template",
 						zap.String("slug", slug),
 						zap.Int("step_index", stepIndex),
-						zap.String("variable_key", key),
+						zap.String("url", completeURL),
 						zap.Error(err),
 					)
-					return nil, http.StatusInternalServerError, fmt.Errorf("failed to render template: %v", err)
+					return nil, http.StatusInternalServerError, fmt.Errorf("failed to render URL template: %v", err)
 				}
-				renderedVars[key] = rendered
+				renderedURL = rendered
 			}
-		}
 
-		reqBody := bytes.NewBuffer(nil)
-		if body, ok := renderedVars["body"]; ok {
-			reqBody = bytes.NewBuffer([]byte(body.(string)))
-		}
+			renderedVars := map[string]interface{}{}
+			if len(step.Variables) > 0 {
+				var rawVars map[string]interface{}
+				if err := json.Unmarshal(step.Variables, &rawVars); err != nil {
+					logger.GetLogger().Error("Service: Failed to parse step variables",
+						zap.String("slug", slug),
+						zap.Int("step_index", stepIndex),
+						zap.Error(err),
+					)
+					return nil, http.StatusInternalServerError, fmt.Errorf("failed to parse variables: %v", err)
+				}
 
-		req, err := http.NewRequest(config.Method, renderedURL, reqBody)
-		if err != nil {
-			logger.GetLogger().Error("Service: Failed to create HTTP request",
+				for key, val := range rawVars {
+					rendered, err := integrasi.RenderTemplate(fmt.Sprint(val), contextData)
+					if err != nil {
+						logger.GetLogger().Error("Service: Failed to render template variable",
+							zap.String("slug", slug),
+							zap.Int("step_index", stepIndex),
+							zap.String("variable_key", key),
+							zap.Error(err),
+						)
+						return nil, http.StatusInternalServerError, fmt.Errorf("failed to render template: %v", err)
+					}
+					renderedVars[key] = rendered
+				}
+			}
+
+			reqBody := bytes.NewBuffer(nil)
+			if body, ok := renderedVars["body"]; ok {
+				reqBody = bytes.NewBuffer([]byte(body.(string)))
+			}
+
+			req, err := http.NewRequest(config.Method, renderedURL, reqBody)
+			if err != nil {
+				logger.GetLogger().Error("Service: Failed to create HTTP request",
+					zap.String("slug", slug),
+					zap.Int("step_index", stepIndex),
+					zap.String("method", config.Method),
+					zap.String("url", renderedURL),
+					zap.Error(err),
+				)
+				return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %v", err)
+			}
+
+			if headers, ok := renderedVars["headers"].(map[string]interface{}); ok {
+				for k, v := range headers {
+					req.Header.Set(k, fmt.Sprint(v))
+				}
+			}
+
+			logger.GetLogger().Debug("Service: Making HTTP request for step",
 				zap.String("slug", slug),
 				zap.Int("step_index", stepIndex),
 				zap.String("method", config.Method),
 				zap.String("url", renderedURL),
-				zap.Error(err),
 			)
-			return nil, http.StatusInternalServerError, fmt.Errorf("failed to create request: %v", err)
-		}
 
-		if headers, ok := renderedVars["headers"].(map[string]interface{}); ok {
-			for k, v := range headers {
-				req.Header.Set(k, fmt.Sprint(v))
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				logger.GetLogger().Error("Service: HTTP request failed for step",
+					zap.String("slug", slug),
+					zap.Int("step_index", stepIndex),
+					zap.Error(err),
+				)
+				return nil, http.StatusInternalServerError, fmt.Errorf("http request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				logger.GetLogger().Error("Service: Failed to read response for step",
+					zap.String("slug", slug),
+					zap.Int("step_index", stepIndex),
+					zap.Error(err),
+				)
+				return nil, http.StatusInternalServerError, fmt.Errorf("failed to read response: %v", err)
+			}
+
+			var parsedResp interface{}
+			if err := json.Unmarshal(bodyBytes, &parsedResp); err != nil {
+				logger.GetLogger().Error("Service: Failed to parse response JSON for step",
+					zap.String("slug", slug),
+					zap.Int("step_index", stepIndex),
+					zap.Int("response_status", resp.StatusCode),
+					zap.Error(err),
+				)
+				return nil, http.StatusInternalServerError, fmt.Errorf("failed to parse response: %v", err)
+			}
+
+			logger.GetLogger().Info("Service: Step executed successfully",
+				zap.String("slug", slug),
+				zap.Int("step_index", stepIndex),
+				zap.String("step_alias", step.Alias),
+				zap.Int("response_status", resp.StatusCode),
+				zap.Int("response_size", len(bodyBytes)),
+			)
+
+			contextData["steps"].(map[string]interface{})[step.Alias] = map[string]interface{}{
+				"result": parsedResp,
+				"status": resp.StatusCode,
 			}
 		}
 
-		logger.GetLogger().Debug("Service: Making HTTP request for step",
+		logger.GetLogger().Info("Service: API group execution completed",
 			zap.String("slug", slug),
-			zap.Int("step_index", stepIndex),
-			zap.String("method", config.Method),
-			zap.String("url", renderedURL),
+			zap.String("group_name", group.Name),
+			zap.Int("total_steps", len(group.Steps)),
 		)
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			logger.GetLogger().Error("Service: HTTP request failed for step",
-				zap.String("slug", slug),
-				zap.Int("step_index", stepIndex),
-				zap.Error(err),
-			)
-			return nil, http.StatusInternalServerError, fmt.Errorf("http request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			logger.GetLogger().Error("Service: Failed to read response for step",
-				zap.String("slug", slug),
-				zap.Int("step_index", stepIndex),
-				zap.Error(err),
-			)
-			return nil, http.StatusInternalServerError, fmt.Errorf("failed to read response: %v", err)
-		}
-
-		var parsedResp interface{}
-		if err := json.Unmarshal(bodyBytes, &parsedResp); err != nil {
-			logger.GetLogger().Error("Service: Failed to parse response JSON for step",
-				zap.String("slug", slug),
-				zap.Int("step_index", stepIndex),
-				zap.Int("response_status", resp.StatusCode),
-				zap.Error(err),
-			)
-			return nil, http.StatusInternalServerError, fmt.Errorf("failed to parse response: %v", err)
-		}
-
-		logger.GetLogger().Info("Service: Step executed successfully",
-			zap.String("slug", slug),
-			zap.Int("step_index", stepIndex),
-			zap.String("step_alias", step.Alias),
-			zap.Int("response_status", resp.StatusCode),
-			zap.Int("response_size", len(bodyBytes)),
-		)
-
-		contextData["steps"].(map[string]interface{})[step.Alias] = map[string]interface{}{
-			"result": parsedResp,
-			"status": resp.StatusCode,
-		}
-	}
-
-	logger.GetLogger().Info("Service: API group execution completed",
-		zap.String("slug", slug),
-		zap.String("group_name", group.Name),
-		zap.Int("total_steps", len(group.Steps)),
-	)
-
-	return contextData, http.StatusOK, nil
+		return contextData, http.StatusOK, nil
 	*/
 	return nil, http.StatusNotImplemented, errors.New("Group execution functions are disabled")
 }
@@ -1632,15 +1832,31 @@ func (s *APIConfigService) CreateURLConfig(ctx context.Context, req dto.URLConfi
 		zap.Bool("is_active", req.IsActive),
 	)
 
+	// Check if URL already exists
+	if _, err := s.repo.FindByURLConfig(ctx, req.URL); err == nil {
+		logger.GetLogger().Warn("Service: URL config duplicates",
+			zap.String("url", req.URL),
+		)
+		return http.StatusConflict, errors.New("URL config with this URL already exists")
+	}
+
 	urlConfig := &model.URLConfig{
-		Nama:       req.Nama,
-		Protocol:   req.Protocol,
-		URL:        req.URL,
-		Deskripsi:  req.Deskripsi,
-		IsActive:   req.IsActive,
+		Nama:        req.Nama,
+		Protocol:    req.Protocol,
+		URL:         req.URL,
+		Deskripsi:   req.Deskripsi,
+		IsActive:    req.IsActive,
 		GRPCService: stringPtr(req.GRPCService),
-				ProtoFile:   stringPtr(req.ProtoFile),
+		ProtoFile:   stringPtr(req.ProtoFile),
 		TLSEnabled:  req.TLSEnabled,
+		// Auth Fields
+		AuthType:     req.AuthType,
+		AuthUsername: req.AuthUsername,
+		AuthPassword: req.AuthPassword,
+		AuthToken:    req.AuthToken,
+		AuthKey:      req.AuthKey,
+		AuthValue:    req.AuthValue,
+		AuthAddTo:    req.AuthAddTo,
 	}
 
 	if err := s.repo.CreateURLConfig(ctx, urlConfig); err != nil {
@@ -1676,14 +1892,14 @@ func (s *APIConfigService) GetByIDURLConfig(ctx context.Context, id uint) (*dto.
 	}
 
 	resp := &dto.URLConfigResponse{
-		ID:        res.ID,
-		Nama:      res.Nama,
-		Protocol:  res.Protocol,
-		URL:       res.URL,
-		Deskripsi: res.Deskripsi,
-		IsActive:  res.IsActive,
+		ID:          res.ID,
+		Nama:        res.Nama,
+		Protocol:    res.Protocol,
+		URL:         res.URL,
+		Deskripsi:   res.Deskripsi,
+		IsActive:    res.IsActive,
 		GRPCService: getStringValue(res.GRPCService),
-				ProtoFile:   getStringValue(res.ProtoFile),
+		ProtoFile:   getStringValue(res.ProtoFile),
 		TLSEnabled:  res.TLSEnabled,
 	}
 
@@ -1696,39 +1912,74 @@ func (s *APIConfigService) GetByIDURLConfig(ctx context.Context, id uint) (*dto.
 }
 
 func (s *APIConfigService) GetAllURLConfig(params any) ([]dto.URLConfigResponse, int64, int, int, error) {
-	// Type assertion to extract parameters from all-in-one struct
-	paginatedData, ok := params.(struct {
-		Page              int
-		Limit             int
-		Offset            int
-		Search            string
-		DynamicParams     map[string]string
-		DynamicTypedParams map[string]any
-	})
+	// Type assertion to extract parameters from map[string]any
+	paginatedData, ok := params.(map[string]any)
 	if !ok {
 		return nil, 0, 0, http.StatusBadRequest, errors.New("invalid pagination parameters")
 	}
 
-	// Get filter values
-	var protocolFilter *string
-	var isActiveFilter *bool
+	// Extract core pagination parameters safely
+	var limit, offset int
+	var search string
 
-	if protocol, exists := paginatedData.DynamicParams["protocol"]; exists {
-		protocolFilter = &protocol
+	if limitVal, exists := paginatedData["limit"]; exists {
+		switch v := limitVal.(type) {
+		case int:
+			limit = v
+		case int64:
+			limit = int(v)
+		case float64:
+			limit = int(v)
+		default:
+			limit = 10
+		}
+	} else {
+		limit = 10
 	}
 
-	if isActive, exists := paginatedData.DynamicTypedParams["is_active"]; exists {
-		if boolVal, ok := isActive.(bool); ok {
-			isActiveFilter = &boolVal
+	if offsetVal, exists := paginatedData["offset"]; exists {
+		switch v := offsetVal.(type) {
+		case int:
+			offset = v
+		case int64:
+			offset = int(v)
+		case float64:
+			offset = int(v)
+		default:
+			offset = 0
 		}
 	}
 
-	urlConfigs, total, err := s.repo.GetAllURLConfig(paginatedData.Limit, paginatedData.Offset, paginatedData.Search)
+	if searchVal, exists := paginatedData["search"]; exists {
+		if s, ok := searchVal.(string); ok {
+			search = s
+		}
+	}
+
+	// Get filter values from dynamic_params and dynamic_typed_params
+	var protocolFilter *string
+	var isActiveFilter *bool
+
+	if dynamicParams, exists := paginatedData["dynamic_params"].(map[string]string); exists {
+		if protocol, ok := dynamicParams["protocol"]; ok && protocol != "" {
+			protocolFilter = &protocol
+		}
+	}
+
+	if dynamicTypedParams, exists := paginatedData["dynamic_typed_params"].(map[string]any); exists {
+		if isActive, ok := dynamicTypedParams["is_active"]; ok {
+			if boolVal, ok := isActive.(bool); ok {
+				isActiveFilter = &boolVal
+			}
+		}
+	}
+
+	urlConfigs, total, err := s.repo.GetAllURLConfig(limit, offset, search)
 	if err != nil {
 		return nil, 0, 0, http.StatusInternalServerError, err
 	}
 
-	pageTotal := int(math.Ceil(float64(total) / float64(paginatedData.Limit)))
+	pageTotal := int(math.Ceil(float64(total) / float64(limit)))
 	var res []dto.URLConfigResponse
 
 	for _, data := range urlConfigs {
@@ -1741,14 +1992,14 @@ func (s *APIConfigService) GetAllURLConfig(params any) ([]dto.URLConfigResponse,
 		}
 
 		res = append(res, dto.URLConfigResponse{
-			ID:        data.ID,
-			Nama:      data.Nama,
-			Protocol:  data.Protocol,
-			URL:       data.URL,
-			Deskripsi: data.Deskripsi,
-			IsActive:  data.IsActive,
+			ID:          data.ID,
+			Nama:        data.Nama,
+			Protocol:    data.Protocol,
+			URL:         data.URL,
+			Deskripsi:   data.Deskripsi,
+			IsActive:    data.IsActive,
 			GRPCService: getStringValue(data.GRPCService),
-				ProtoFile:   getStringValue(data.ProtoFile),
+			ProtoFile:   getStringValue(data.ProtoFile),
 			TLSEnabled:  data.TLSEnabled,
 		})
 	}
@@ -1766,15 +2017,31 @@ func (s *APIConfigService) UpdateURLConfig(ctx context.Context, id uint, req dto
 	}
 
 	urlConfig := &model.URLConfig{
-		Nama:       req.Nama,
-		Protocol:   req.Protocol,
-		URL:        req.URL,
-		Deskripsi:  req.Deskripsi,
-		IsActive:   req.IsActive,
+		Nama:        req.Nama,
+		Protocol:    req.Protocol,
+		URL:         req.URL,
+		Deskripsi:   req.Deskripsi,
+		IsActive:    req.IsActive,
 		GRPCService: stringPtr(req.GRPCService),
-				ProtoFile:   stringPtr(req.ProtoFile),
+		ProtoFile:   stringPtr(req.ProtoFile),
 		TLSEnabled:  req.TLSEnabled,
+		// Auth Fields
+		AuthType:     req.AuthType,
+		AuthUsername: req.AuthUsername,
+		AuthPassword: req.AuthPassword,
+		AuthToken:    req.AuthToken,
+		AuthKey:      req.AuthKey,
+		AuthValue:    req.AuthValue,
+		AuthAddTo:    req.AuthAddTo,
 	}
+	// Check for duplicates if URL changes
+	existing, _ := s.repo.GetByIDURLConfig(id)
+	if existing != nil && existing.URL != req.URL {
+		if _, err := s.repo.FindByURLConfig(ctx, req.URL); err == nil {
+			return http.StatusConflict, errors.New("URL config with this URL already exists")
+		}
+	}
+
 	urlConfig.ID = id
 
 	if err := s.repo.UpdateURLConfig(ctx, urlConfig); err != nil {

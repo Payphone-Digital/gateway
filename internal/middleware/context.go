@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,7 +15,7 @@ func ContextMiddleware(module string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Create context with request information
 		function := c.Request.URL.Path
-		ctx := ctxutil.NewContext(c.Request.Context(), c.Request, module, function)
+		ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, module, function)
 
 		// Add timeout to context (default 30 seconds)
 		ctx, cancel := ctxutil.WithTimeout(ctx, 30*time.Second)
@@ -272,7 +272,7 @@ func NewContextHelper() *ContextHelper {
 // WithContext helper function untuk menambahkan context ke handler
 func (ch *ContextHelper) WithContext(module, function string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx := ctxutil.NewContext(c.Request.Context(), c.Request, module, function)
+		ctx := ctxutil.NewContextWithRequest(c.Request.Context(), c.Request, module, function)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}

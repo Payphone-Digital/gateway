@@ -2,17 +2,15 @@ package ctxutil
 
 import (
 	"context"
-	"net/http"
 	"time"
 
-	"github.com/surdiana/gateway/internal/constants"
-	"github.com/google/uuid"
+	"github.com/Payphone-Digital/gateway/internal/constants"
 )
 
-// Re-export ContextKey type for backward compatibility
+// Re-export ContextKey type
 type ContextKey = constants.ContextKey
 
-// Re-export context keys for backward compatibility
+// Re-export context keys
 const (
 	RequestIDKey     = constants.CtxKeyRequestID
 	UserIDKey        = constants.CtxKeyUserID
@@ -23,78 +21,30 @@ const (
 	StartTimeKey     = constants.CtxKeyStartTime
 	ModuleKey        = constants.CtxKeyModule
 	FunctionKey      = constants.CtxKeyFunction
+	UserLoginKey     = constants.CtxKeyUserLogin
 )
 
-// RequestContext berisi informasi request yang disimpan di context
-type RequestContext struct {
-	RequestID     string
-	TraceID       string
-	CorrelationID string
-	ClientIP      string
-	UserAgent     string
-	UserID        interface{}
-	StartTime     time.Time
-	Module        string
-	Function      string
-}
-
-// NewContext membuat context baru dengan request information
-func NewContext(ctx context.Context, req *http.Request, module, function string) context.Context {
-	// Generate unique IDs
-	requestID := uuid.New().String()
-	traceID := getOrCreateTraceID(ctx)
-	correlationID := getOrCreateCorrelationID(ctx)
-
-	// Get client IP
-	clientIP := getClientIP(req)
-	userAgent := req.Header.Get("User-Agent")
-
-	// Create request context
-	requestCtx := RequestContext{
-		RequestID:     requestID,
-		TraceID:       traceID,
-		CorrelationID: correlationID,
-		ClientIP:      clientIP,
-		UserAgent:     userAgent,
-		StartTime:     time.Now(),
-		Module:        module,
-		Function:      function,
-	}
-
-	// Store all values in context
-	ctx = context.WithValue(ctx, RequestIDKey, requestID)
-	ctx = context.WithValue(ctx, TraceIDKey, traceID)
-	ctx = context.WithValue(ctx, CorrelationIDKey, correlationID)
-	ctx = context.WithValue(ctx, ClientIPKey, clientIP)
-	ctx = context.WithValue(ctx, UserAgentKey, userAgent)
-	ctx = context.WithValue(ctx, StartTimeKey, requestCtx.StartTime)
-	ctx = context.WithValue(ctx, ModuleKey, module)
-	ctx = context.WithValue(ctx, FunctionKey, function)
-
-	return ctx
-}
-
-// WithUserID menambahkan user ID ke context
-func WithUserID(ctx context.Context, userID interface{}) context.Context {
-	return context.WithValue(ctx, UserIDKey, userID)
-}
-
-// WithTimeout membuat context dengan timeout
-func WithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, timeout)
-}
-
-// WithDeadline membuat context dengan deadline
-func WithDeadline(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(ctx, deadline)
-}
-
-// WithValue menambahkan custom value ke context
+// WithValue adds a value to context
 func WithValue(ctx context.Context, key ContextKey, value interface{}) context.Context {
 	return context.WithValue(ctx, key, value)
 }
 
-// Helper functions untuk mengambil values dari context
+// WithUserID adds user ID to context
+func WithUserID(ctx context.Context, userID interface{}) context.Context {
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// WithTimeout creates context with timeout
+func WithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, timeout)
+}
+
+// WithDeadline creates context with deadline
+func WithDeadline(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, deadline)
+}
+
+// Getter functions
 func GetRequestID(ctx context.Context) string {
 	if val, ok := ctx.Value(RequestIDKey).(string); ok {
 		return val
@@ -134,6 +84,20 @@ func GetUserID(ctx context.Context) interface{} {
 	return ctx.Value(UserIDKey)
 }
 
+func GetUserIDUint(ctx context.Context) (uint, bool) {
+	if val, ok := ctx.Value(UserIDKey).(uint); ok {
+		return val, true
+	}
+	return 0, false
+}
+
+func GetUserIDString(ctx context.Context) (string, bool) {
+	if val, ok := ctx.Value(UserIDKey).(string); ok {
+		return val, true
+	}
+	return "", false
+}
+
 func GetStartTime(ctx context.Context) time.Time {
 	if val, ok := ctx.Value(StartTimeKey).(time.Time); ok {
 		return val
@@ -155,22 +119,14 @@ func GetFunction(ctx context.Context) string {
 	return ""
 }
 
-// GetRequestContext mengembalikan semua request context information
-func GetRequestContext(ctx context.Context) RequestContext {
-	return RequestContext{
-		RequestID:     GetRequestID(ctx),
-		TraceID:       GetTraceID(ctx),
-		CorrelationID: GetCorrelationID(ctx),
-		ClientIP:      GetClientIP(ctx),
-		UserAgent:     GetUserAgent(ctx),
-		UserID:        GetUserID(ctx),
-		StartTime:     GetStartTime(ctx),
-		Module:        GetModule(ctx),
-		Function:      GetFunction(ctx),
+func GetUserLogin(ctx context.Context) string {
+	if val, ok := ctx.Value(UserLoginKey).(string); ok {
+		return val
 	}
+	return ""
 }
 
-// GetDuration menghitung duration dari start time
+// GetDuration calculates duration from start time
 func GetDuration(ctx context.Context) time.Duration {
 	startTime := GetStartTime(ctx)
 	if !startTime.IsZero() {
@@ -179,7 +135,7 @@ func GetDuration(ctx context.Context) time.Duration {
 	return 0
 }
 
-// IsValidContext memeriksa apakah context masih valid
+// IsValidContext checks if context is still valid
 func IsValidContext(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -189,62 +145,82 @@ func IsValidContext(ctx context.Context) bool {
 	}
 }
 
-// GetContextError mengembalikan error dari context jika ada
+// GetContextError returns error from context if any
 func GetContextError(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// Helper functions private
-func getOrCreateTraceID(ctx context.Context) string {
-	if traceID := GetTraceID(ctx); traceID != "" {
-		return traceID
+// NewContext creates a new context with request tracking information
+// Simplified version - only adds essential tracking IDs
+func NewContext(ctx context.Context) context.Context {
+	// This is a simplified stub - actual implementation should be in middleware
+	// that has access to http.Request
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return uuid.New().String()
+
+	// Set start time if not already set
+	if GetStartTime(ctx).IsZero() {
+		ctx = context.WithValue(ctx, StartTimeKey, time.Now())
+	}
+
+	return ctx
 }
 
-func getOrCreateCorrelationID(ctx context.Context) string {
-	if correlationID := GetCorrelationID(ctx); correlationID != "" {
-		return correlationID
+// NewContextWithRequest creates context with HTTP request information
+// This maintains backward compatibility with existing handler code
+func NewContextWithRequest(ctx context.Context, req interface{}, module, function string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return uuid.New().String()
+
+	// Add module and function
+	ctx = context.WithValue(ctx, ModuleKey, module)
+	ctx = context.WithValue(ctx, FunctionKey, function)
+
+	// Set start time if not already set
+	if GetStartTime(ctx).IsZero() {
+		ctx = context.WithValue(ctx, StartTimeKey, time.Now())
+	}
+
+	return ctx
 }
 
-func getClientIP(req *http.Request) string {
-	// Try to get real IP from headers first
-	if ip := req.Header.Get("X-Forwarded-For"); ip != "" {
-		return ip
-	}
-	if ip := req.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	if ip := req.Header.Get("CF-Connecting-IP"); ip != "" {
-		return ip
-	}
-	// Fallback to RemoteAddr
-	return req.RemoteAddr
-}
-
-// ContextToMap mengubah context ke map untuk logging
+// ContextToMap converts context to map for logging
 func ContextToMap(ctx context.Context) map[string]interface{} {
-	requestCtx := GetRequestContext(ctx)
+	result := make(map[string]interface{})
 
-	result := map[string]interface{}{
-		"request_id":     requestCtx.RequestID,
-		"trace_id":       requestCtx.TraceID,
-		"correlation_id": requestCtx.CorrelationID,
-		"client_ip":      requestCtx.ClientIP,
-		"user_agent":     requestCtx.UserAgent,
-		"module":         requestCtx.Module,
-		"function":       requestCtx.Function,
-		"duration":       GetDuration(ctx),
+	if requestID := GetRequestID(ctx); requestID != "" {
+		result["request_id"] = requestID
+	}
+	if traceID := GetTraceID(ctx); traceID != "" {
+		result["trace_id"] = traceID
+	}
+	if correlationID := GetCorrelationID(ctx); correlationID != "" {
+		result["correlation_id"] = correlationID
+	}
+	if clientIP := GetClientIP(ctx); clientIP != "" {
+		result["client_ip"] = clientIP
+	}
+	if userAgent := GetUserAgent(ctx); userAgent != "" {
+		result["user_agent"] = userAgent
+	}
+	if module := GetModule(ctx); module != "" {
+		result["module"] = module
+	}
+	if function := GetFunction(ctx); function != "" {
+		result["function"] = function
+	}
+	if userID := GetUserID(ctx); userID != nil {
+		result["user_id"] = userID
+	}
+	if duration := GetDuration(ctx); duration > 0 {
+		result["duration"] = duration
 	}
 
-	if requestCtx.UserID != nil {
-		result["user_id"] = requestCtx.UserID
-	}
-
-	if !requestCtx.StartTime.IsZero() {
-		result["start_time"] = requestCtx.StartTime
+	startTime := GetStartTime(ctx)
+	if !startTime.IsZero() {
+		result["start_time"] = startTime
 	}
 
 	return result

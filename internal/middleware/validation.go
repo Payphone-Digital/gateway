@@ -3,12 +3,13 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 
-	"github.com/surdiana/gateway/pkg/logger"
-	"github.com/surdiana/gateway/pkg/validation"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/validation"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"go.uber.org/zap"
@@ -68,8 +69,7 @@ func (m *ValidationMiddleware) ValidateRequestBody(factory func() interface{}) g
 				zap.Error(err),
 			)
 			c.JSON(http.StatusBadRequest, gin.H{
-				"message": "Format JSON tidak valid",
-				"details": err.Error(),
+				"message": err.Error(),
 			})
 			c.Abort()
 			return
@@ -82,7 +82,7 @@ func (m *ValidationMiddleware) ValidateRequestBody(factory func() interface{}) g
 		)
 
 		if err := m.validate.Struct(request); err != nil {
-			var validationErrors []string
+			validationErrors := make(map[string][]map[string]string)
 
 			for _, e := range err.(validator.ValidationErrors) {
 				logger.GetLogger().Debug("Middleware: Validation error occurred",
@@ -91,27 +91,39 @@ func (m *ValidationMiddleware) ValidateRequestBody(factory func() interface{}) g
 					zap.String("tag", e.Tag()),
 					zap.String("param", e.Param()),
 				)
-				// Ambil custom message jika ada
-				fmt.Println("fieldMessages", validation.CustomMessage(e.Field()))
+
+				// Determine field name (convert to snake_case equivalent or use lowercase)
+				fieldName := toSnakeCase(e.Field())
+
+				// Get error message
+				var message string
 				if fieldMessages := validation.CustomMessage(e.Field()); fieldMessages != nil {
 					if msg, exists := fieldMessages[e.Tag()]; exists {
-						validationErrors = append(validationErrors, msg)
+						message = msg
 					}
-				} else {
-					validationErrors = append(validationErrors, validation.DefaultMessage(e.Field(), e.Tag()))
 				}
+				if message == "" {
+					message = validation.DefaultMessage(e.Field(), e.Tag())
+				}
+
+				errorDetail := map[string]string{
+					"code":    e.Tag(),
+					"message": message,
+				}
+
+				validationErrors[fieldName] = append(validationErrors[fieldName], errorDetail)
 			}
 
 			logger.GetLogger().Warn("Middleware: Request validation failed",
 				zap.String("client_ip", clientIP),
 				zap.String("path", c.Request.URL.Path),
-				zap.Strings("validation_errors", validationErrors),
+				zap.Any("validation_errors", validationErrors),
 				zap.Int("error_count", len(validationErrors)),
 			)
 
-			c.JSON(http.StatusBadRequest, gin.H{
-				"message": "Validasi gagal",
-				"details": validationErrors,
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"message": "Unprocessable Entity",
+				"errors":  validationErrors,
 			})
 			c.Abort()
 			return
@@ -126,32 +138,12 @@ func (m *ValidationMiddleware) ValidateRequestBody(factory func() interface{}) g
 	}
 }
 
-// func formatValidationError(e validator.FieldError) string {
-// 	fieldName := strings.ToLower(e.Field())
+func toSnakeCase(str string) string {
+	var matchFirstCap = regexp.MustCompile("(.)([A-Z][a-z]+)")
+	var matchAllCap = regexp.MustCompile("([a-z0-9])([A-Z])")
 
-// 	switch e.Tag() {
-// 	case "required":
-// 		return fmt.Sprintf("%s tidak boleh kosong", fieldName)
-// 	case "email":
-// 		return "Format email tidak valid"
-// 	case "min":
-// 		return fmt.Sprintf("%s minimal harus %s karakter", fieldName, e.Param())
-// 	case "max":
-// 		return fmt.Sprintf("%s maksimal boleh %s karakter", fieldName, e.Param())
-// 	case "len":
-// 		return fmt.Sprintf("%s harus tepat %s karakter", fieldName, e.Param())
-// 	case "password":
-// 		return "Password harus minimal 8 karakter dan mengandung huruf besar, huruf kecil, angka, dan karakter khusus"
-// 	case "phone":
-// 		return "Nomor telepon tidak valid (contoh format: +628123456789, 08123456789)"
-// 	case "name":
-// 		return "Nama hanya boleh berisi huruf, spasi, dan tanda hubung (2-50 karakter)"
-// 	case "referral_code":
-// 		return "Kode referral harus 6-8 karakter, hanya huruf dan angka, dan dalam huruf besar"
-// 	case "eqfield":
-// 		compareField := strings.ToLower(e.Param())
-// 		return fmt.Sprintf("%s harus sama dengan %s", fieldName, compareField)
-// 	default:
-// 		return fmt.Sprintf("%s tidak valid: %s", fieldName, e.Tag())
-// 	}
-// }
+	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
+	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
+	return strings.ToLower(snake)
+}
+

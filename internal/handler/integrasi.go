@@ -6,20 +6,29 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/surdiana/gateway/internal/constants"
-	"github.com/surdiana/gateway/internal/dto"
-	"github.com/surdiana/gateway/internal/service"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/constants"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/internal/service"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/routing"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 type APIConfigHandler struct {
 	integrasiService *service.APIConfigService
+	routeRefresher   *routing.Refresher
+	cacheService     *service.CacheService
 }
 
-func NewAPIConfigHandler(service *service.APIConfigService) *APIConfigHandler {
-	return &APIConfigHandler{integrasiService: service}
+// NewAPIConfigHandler creates a new API config handler
+// routeRefresher is optional - if nil, routes will not be auto-refreshed on CRUD
+func NewAPIConfigHandler(service *service.APIConfigService, routeRefresher *routing.Refresher, cacheService *service.CacheService) *APIConfigHandler {
+	return &APIConfigHandler{
+		integrasiService: service,
+		routeRefresher:   routeRefresher,
+		cacheService:     cacheService,
+	}
 }
 
 // Start Create
@@ -47,7 +56,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 
 	// Log input data (sanitize sensitive data)
 	logger.GetLogger().Info("Creating API config",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 		zap.String("method", req.Method),
 		zap.Uint("url_config_id", req.URLConfigID),
 		zap.String("uri", req.URI),
@@ -67,7 +76,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 	status, err := h.integrasiService.CreateConfig(ctx, req)
 	if err != nil {
 		logger.GetLogger().Error("Failed to create API config",
-			zap.String("slug", req.Slug),
+			zap.String("path", req.Path),
 			zap.String("client_ip", clientIP),
 			zap.Int("http_status", status),
 			zap.Error(err),
@@ -84,9 +93,27 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 	}
 
 	logger.GetLogger().Info("API config created successfully",
-		zap.String("slug", req.Slug),
+		zap.String("path", req.Path),
 		zap.String("client_ip", clientIP),
 	)
+
+	// Refresh route registry if refresher is available
+	if h.routeRefresher != nil {
+		go func() {
+			refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer refreshCancel()
+			if err := h.routeRefresher.RefreshSingle(refreshCtx, req.Path, req.Method); err != nil {
+				logger.GetLogger().Warn("Failed to refresh route registry after create",
+					zap.String("path", req.Path),
+					zap.Error(err),
+				)
+			} else {
+				logger.GetLogger().Info("Route registry refreshed after create",
+					zap.String("path", req.Path),
+				)
+			}
+		}()
+	}
 
 	c.JSON(status, constants.BuildSuccessResponse("Create successful"))
 }
@@ -115,7 +142,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 
 // 	logger.GetLogger().Info("Creating API group",
 // 		zap.String("name", req.Name),
-// 		zap.String("slug", req.Slug),
+// 		zap.String("path", req.Path),
 // 		zap.Bool("is_admin", req.IsAdmin),
 // 		zap.String("client_ip", clientIP),
 // 	)
@@ -239,7 +266,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 // 	}
 
 // 	logger.GetLogger().Info("Creating API group cron",
-// 		zap.String("slug", req.Slug),
+// 		zap.String("path", req.Path),
 // 		zap.String("schedule", req.Schedule),
 // 		zap.Bool("enabled", req.Enabled),
 // 		zap.String("client_ip", clientIP),
@@ -252,7 +279,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 // 	status, err := h.integrasiService.CreateGroupCron(ctx, req)
 // 	if err != nil {
 // 		logger.GetLogger().Error("Failed to create API group cron",
-// 			zap.String("slug", req.Slug),
+// 			zap.String("path", req.Path),
 // 			zap.String("client_ip", clientIP),
 // 			zap.Int("http_status", status),
 // 			zap.Error(err),
@@ -269,7 +296,7 @@ func (h *APIConfigHandler) CreateConfig(c *gin.Context) {
 // 	}
 
 // 	logger.GetLogger().Info("API group cron created successfully",
-// 		zap.String("slug", req.Slug),
+// 		zap.String("path", req.Path),
 // 		zap.String("client_ip", clientIP),
 // 	)
 
@@ -296,6 +323,14 @@ func (h *APIConfigHandler) UpdateConfig(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
+	// Fetch OLD config BEFORE update to know old path/method for route invalidation
+	oldConfig, _, _ := h.integrasiService.GetByIDConfig(ctx, uint(id))
+	var oldPath, oldMethod string
+	if oldConfig != nil {
+		oldPath = oldConfig.Path
+		oldMethod = oldConfig.Method
+	}
+
 	status, err := h.integrasiService.UpdateConfig(ctx, uint(id), req)
 	if err != nil {
 		// Check if it's a timeout error
@@ -306,6 +341,70 @@ func (h *APIConfigHandler) UpdateConfig(c *gin.Context) {
 		c.JSON(status, constants.BuildErrorResponse("Update failed", err.Error()))
 		return
 	}
+
+	// Fetch updated config to ensure we have the correct path/slug for refresh
+	// Use ID to get the source of truth from DB, avoiding prefix mismatches (e.g. /api/ vs /)
+	updatedConfig, _, err := h.integrasiService.GetByIDConfig(ctx, uint(id))
+	if err != nil {
+		logger.GetLogger().Warn("Failed to fetch updated config for refresh",
+			zap.Uint("config_id", uint(id)),
+			zap.Error(err),
+		)
+		// Fallback to req.Path if fetch fails, though risk of staleness exists
+	}
+
+	refreshPath := req.Path
+	refreshMethod := req.Method
+	if updatedConfig != nil {
+		refreshPath = updatedConfig.Path
+		refreshMethod = updatedConfig.Method
+	}
+
+	// Refresher and Cache Invalidation
+	go func() {
+		refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer refreshCancel()
+
+		// 1. Invalidate OLD route first (if path or method changed)
+		if h.routeRefresher != nil && oldPath != "" {
+			if oldPath != refreshPath || oldMethod != refreshMethod {
+				_ = h.routeRefresher.InvalidateRoute(oldPath, oldMethod) // Remove old route
+				logger.GetLogger().Info("Old route invalidated during update",
+					zap.String("old_path", oldPath),
+					zap.String("old_method", oldMethod),
+				)
+			}
+		}
+
+		// 2. Add/Update new route
+		if h.routeRefresher != nil {
+			if err := h.routeRefresher.RefreshSingle(refreshCtx, refreshPath, refreshMethod); err != nil {
+				logger.GetLogger().Warn("Failed to refresh route registry after update",
+					zap.String("path", refreshPath),
+					zap.Error(err),
+				)
+			} else {
+				logger.GetLogger().Info("Route registry refreshed after update",
+					zap.String("path", refreshPath),
+				)
+			}
+		}
+
+		// 2. Invalidate Cache
+		if h.cacheService != nil {
+			if err := h.cacheService.InvalidateCache(refreshCtx, refreshPath); err != nil {
+				logger.GetLogger().Warn("Failed to invalidate cache after update",
+					zap.String("path", refreshPath),
+					zap.Error(err),
+				)
+			} else {
+				logger.GetLogger().Info("Cache invalidated after update",
+					zap.String("path", refreshPath),
+				)
+			}
+		}
+	}()
+
 	c.JSON(status, constants.BuildSuccessResponse("Update successful"))
 }
 
@@ -423,6 +522,24 @@ func (h *APIConfigHandler) DeleteConfig(c *gin.Context) {
 		zap.Uint("config_id", uint(id)),
 		zap.String("client_ip", clientIP),
 	)
+
+	// Refresh route registry if refresher is available (full refresh to remove deleted route)
+	if h.routeRefresher != nil {
+		go func() {
+			refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer refreshCancel()
+			if err := h.routeRefresher.Refresh(refreshCtx); err != nil {
+				logger.GetLogger().Warn("Failed to refresh route registry after delete",
+					zap.Uint("config_id", uint(id)),
+					zap.Error(err),
+				)
+			} else {
+				logger.GetLogger().Info("Route registry refreshed after delete",
+					zap.Uint("config_id", uint(id)),
+				)
+			}
+		}()
+	}
 
 	c.JSON(status, constants.BuildSuccessResponse("Delete successful"))
 }
@@ -1338,6 +1455,24 @@ func (h *APIConfigHandler) UpdateURLConfig(c *gin.Context) {
 		c.JSON(status, constants.BuildErrorResponse("Update failed", err.Error()))
 		return
 	}
+	// Refresh entire registry because URLConfig change might affect multiple routes (e.g. IsActive status)
+	if h.routeRefresher != nil {
+		go func() {
+			refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer refreshCancel()
+			if err := h.routeRefresher.Refresh(refreshCtx); err != nil {
+				logger.GetLogger().Warn("Failed to refresh registry after URL config update",
+					zap.Uint("url_config_id", uint(id)),
+					zap.Error(err),
+				)
+			} else {
+				logger.GetLogger().Info("Registry refreshed after URL config update",
+					zap.Uint("url_config_id", uint(id)),
+				)
+			}
+		}()
+	}
+
 	c.JSON(status, constants.BuildSuccessResponse("Update successful"))
 }
 

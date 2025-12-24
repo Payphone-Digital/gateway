@@ -6,29 +6,28 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/surdiana/gateway/internal/dto"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
+	"github.com/gin-gonic/gin"
+	"github.com/jhump/protoreflect/dynamic"
+	"github.com/jhump/protoreflect/grpcreflect"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/structpb"
+	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 )
 
 // GRPCHandler handles gRPC requests
 type GRPCHandler struct {
 	connections map[string]*grpc.ClientConn
-	protoCache  map[string]protoreflect.MessageDescriptor
 }
 
 // NewGRPCHandler creates a new gRPC handler
 func NewGRPCHandler() *GRPCHandler {
 	return &GRPCHandler{
 		connections: make(map[string]*grpc.ClientConn),
-		protoCache:  make(map[string]protoreflect.MessageDescriptor),
 	}
 }
 
@@ -62,73 +61,81 @@ func (h *GRPCHandler) ExecuteGRPCRequest(ctx context.Context, config GRPCRequest
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Get or create connection
+	// 1. Get or create connection
 	conn, err := h.getOrCreateConnection(config.Address, config.TLSEnabled)
 	if err != nil {
 		zapLogger.Error("Failed to create gRPC connection", zap.Error(err))
 		return nil, 0, fmt.Errorf("failed to create connection: %w", err)
 	}
 
-	// Prepare metadata
+	// 2. Prepare metadata
 	md := make(metadata.MD)
 	for k, v := range config.Headers {
 		md.Set(k, v)
 	}
-
-	// Add metadata to context
 	requestCtx = metadata.NewOutgoingContext(requestCtx, md)
 
-	zapLogger.Info("Executing gRPC request",
+	zapLogger.Info("Executing real gRPC request via reflection",
 		zap.String("service", config.Service),
 		zap.String("method", config.Method),
-		zap.Any("message", config.Message),
 	)
 
-	// For now, we'll implement a simple JSON-based approach
-	// In production, you would want to use proper proto compilation
-	result, err := h.executeDynamicGRPC(requestCtx, conn, config)
+	// 3. Use Reflection to resolve service and method
+	// Create reflection client
+	refClient := grpcreflect.NewClient(requestCtx, reflectpb.NewServerReflectionClient(conn))
+	defer refClient.Reset() // Clean up
+
+	// Resolve Service
+	svcDesc, err := refClient.ResolveService(config.Service)
 	if err != nil {
-		zapLogger.Error("gRPC request failed", zap.Error(err))
-		return nil, 500, fmt.Errorf("grpc error: %w", err)
+		zapLogger.Error("Failed to resolve service via reflection", zap.Error(err))
+		return nil, 404, fmt.Errorf("service not found: %s (ensure reflection is enabled on server)", config.Service)
+	}
+
+	// Resolve Method
+	methodDesc := svcDesc.FindMethodByName(config.Method)
+	if methodDesc == nil {
+		zapLogger.Error("Method not found in service", zap.String("method", config.Method))
+		return nil, 404, fmt.Errorf("method not found: %s", config.Method)
+	}
+
+	// 4. Create Dynamic Message for Input
+	inputMsg := dynamic.NewMessage(methodDesc.GetInputType())
+
+	// Convert JSON map to JSON bytes first, then unmarshal into Dynamic Message
+	msgBytes, err := json.Marshal(config.Message)
+	if err != nil {
+		return nil, 400, fmt.Errorf("failed to marshal input message: %w", err)
+	}
+
+	err = inputMsg.UnmarshalJSON(msgBytes)
+	if err != nil {
+		zapLogger.Error("Failed to map JSON to Proto Message", zap.Error(err))
+		return nil, 400, fmt.Errorf("invalid input for method %s: %w", config.Method, err)
+	}
+
+	// 5. Invoke RPC
+	// Create an empty dynamic message for response
+	outputMsg := dynamic.NewMessage(methodDesc.GetOutputType())
+
+	// Native Invoke using the full method name: /package.Service/Method
+	fullMethodName := fmt.Sprintf("/%s/%s", config.Service, config.Method)
+
+	err = conn.Invoke(requestCtx, fullMethodName, inputMsg, outputMsg)
+	if err != nil {
+		zapLogger.Error("gRPC execution failed", zap.Error(err))
+		return nil, 500, fmt.Errorf("rpc failure: %w", err)
+	}
+
+	// 6. Convert Output to JSON
+	outputJSON, err := outputMsg.MarshalJSON()
+	if err != nil {
+		zapLogger.Error("Failed to marshal response", zap.Error(err))
+		return nil, 500, fmt.Errorf("failed to process response: %w", err)
 	}
 
 	zapLogger.Info("gRPC request completed successfully")
-	return result, 200, nil
-}
-
-// executeDynamicGRPC executes gRPC request dynamically (simplified approach)
-func (h *GRPCHandler) executeDynamicGRPC(ctx context.Context, conn *grpc.ClientConn, config GRPCRequestConfig) ([]byte, error) {
-	// This is a simplified implementation
-	// In production, you would want to:
-	// 1. Parse proto files dynamically
-	// 2. Generate message types dynamically
-	// 3. Use reflection to call methods
-
-	// For now, we'll use a generic approach with dynamic messages
-	// Create dynamic message from JSON data
-	messageData, err := json.Marshal(config.Message)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	// Create a dynamic message (this is simplified)
-	// In production, you'd use proto reflection properly
-	dynamicMsg := &structpb.Value{}
-	if err := protojson.Unmarshal(messageData, dynamicMsg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal message: %w", err)
-	}
-
-	// For demonstration, we'll return the message as JSON
-	// In production, this would be actual gRPC call result
-	result := map[string]interface{}{
-		"service": config.Service,
-		"method":  config.Method,
-		"message": dynamicMsg,
-		"status":  "success",
-		"note":    "This is a simplified gRPC implementation. In production, use proper proto compilation.",
-	}
-
-	return json.Marshal(result)
+	return outputJSON, 200, nil
 }
 
 // getOrCreateConnection gets or creates a gRPC connection
@@ -158,16 +165,6 @@ func (h *GRPCHandler) getOrCreateConnection(address string, tlsEnabled bool) (*g
 	return conn, nil
 }
 
-// CloseConnection closes a gRPC connection
-func (h *GRPCHandler) CloseConnection(address string) error {
-	if conn, exists := h.connections[address]; exists {
-		err := conn.Close()
-		delete(h.connections, address)
-		return err
-	}
-	return nil
-}
-
 // CloseAllConnections closes all gRPC connections
 func (h *GRPCHandler) CloseAllConnections() error {
 	var lastErr error
@@ -182,30 +179,60 @@ func (h *GRPCHandler) CloseAllConnections() error {
 
 // BuildGRPCRequestConfig builds gRPC request config from API config
 func BuildGRPCRequestConfig(config dto.APIConfigResponse, variables map[string]Variable, c interface{}) GRPCRequestConfig {
-	zapLogger := logger.GetLogger().With(zap.String("slug", config.Slug))
+	zapLogger := logger.GetLogger().With(zap.String("slug", config.Path))
 
 	// Extract address and service from URLConfig
 	address := config.URLConfig.URL
 	service := config.URLConfig.GRPCService
-
-	// Get method from APIConfig (now contains both HTTP and gRPC methods)
 	method := config.Method
+	if config.URI != "" {
+		method = config.URI
+		// Remove leading slash if present
+		if len(method) > 0 && method[0] == '/' {
+			method = method[1:]
+		}
+	}
 
 	// Build message from body and variables
 	message := make(map[string]interface{})
+	
+	// 1. Start with configured Static Body (from DB)
 	if config.Body != nil {
 		for k, v := range config.Body {
 			// Apply template rendering to message values
-		if strVal, ok := v.(string); ok {
-			if containsTemplate(strVal) {
-				resolved := resolveTemplateForGRPC(strVal, variables, c)
-				message[k] = resolved
+			if strVal, ok := v.(string); ok {
+				if containsTemplate(strVal) {
+					resolved := resolveTemplateForGRPC(strVal, variables, c)
+					message[k] = resolved
+				} else {
+					message[k] = v
+				}
 			} else {
 				message[k] = v
 			}
-		} else {
-			message[k] = v
 		}
+	}
+
+	// 2. Merge with Incoming Request Body (Dynamic Data)
+	// This ensures user input (e.g. registration form) is included
+	if ctx, ok := c.(*gin.Context); ok {
+		if ctx.Request.Body != nil {
+			bodyData, err := ctx.GetRawData() // Reads and restores body
+			if err == nil && len(bodyData) > 0 {
+				var incomingBody map[string]interface{}
+				if err := json.Unmarshal(bodyData, &incomingBody); err == nil {
+					// Merge incoming body into message, overwriting defaults
+					for k, v := range incomingBody {
+						message[k] = v
+					}
+					zapLogger.Debug("Merged incoming request body", zap.Any("body", incomingBody))
+				} else {
+					zapLogger.Warn("Failed to unmarshal incoming request body", zap.Error(err))
+				}
+			} else if err != nil {
+				zapLogger.Warn("Failed to read incoming request body", zap.Error(err))
+			}
+			// Important: GetRawData already restores the body, so we don't need to do it manually
 		}
 	}
 
@@ -225,7 +252,6 @@ func BuildGRPCRequestConfig(config dto.APIConfigResponse, variables map[string]V
 		zap.String("service", service),
 		zap.String("method", method),
 		zap.Bool("tls_enabled", config.URLConfig.TLSEnabled),
-		zap.Int("message_fields", len(message)),
 	)
 
 	return GRPCRequestConfig{
@@ -249,8 +275,8 @@ func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr ||
 		(len(s) > len(substr) &&
 			(s[:len(substr)] == substr ||
-			 s[len(s)-len(substr):] == substr ||
-			 findSubstring(s, substr))))
+				s[len(s)-len(substr):] == substr ||
+				findSubstring(s, substr))))
 }
 
 // Helper function to find substring
@@ -263,51 +289,20 @@ func findSubstring(s, substr string) bool {
 	return false
 }
 
-// Example of how to use the gRPC handler
-func ExampleGRPCUsage() {
-	handler := NewGRPCHandler()
-	defer handler.CloseAllConnections()
-
-	// Example gRPC request
-	config := GRPCRequestConfig{
-		Address:    "localhost:50051",
-		Service:    "user.UserService",
-		Method:     "GetUser",
-		Headers:    map[string]string{"authorization": "Bearer token123"},
-		Message:    map[string]interface{}{"user_id": "12345"},
-		Timeout:    5,
-		TLSEnabled: false,
-	}
-
-	ctx := context.Background()
-	result, status, err := handler.ExecuteGRPCRequest(ctx, config)
-	if err != nil {
-		fmt.Printf("gRPC request failed: %v\n", err)
-		return
-	}
-
-	fmt.Printf("gRPC request success (status: %d): %s\n", status, string(result))
-}
-
 // resolveTemplateForGRPC resolves template variables for gRPC
 func resolveTemplateForGRPC(text string, variables map[string]Variable, c interface{}) string {
-	// Simple template resolution for gRPC
-	// In production, you'd want to use the same template system as HTTP
 	result := text
-
 	for key, variable := range variables {
 		placeholder := "{{" + key + "}}"
 		if contains(result, placeholder) {
 			result = replaceAll(result, placeholder, variable.Value)
 		}
 	}
-
 	return result
 }
 
 // replaceAll replaces all occurrences of old with new in s
 func replaceAll(s, old, new string) string {
-	// Simple implementation - in production use strings.ReplaceAll
 	result := s
 	for contains(result, old) {
 		result = replaceSingle(result, old, new)
@@ -320,7 +315,6 @@ func replaceSingle(s, old, new string) string {
 	if old == "" {
 		return s
 	}
-
 	for i := 0; i <= len(s)-len(old); i++ {
 		if s[i:i+len(old)] == old {
 			return s[:i] + new + s[i+len(old):]

@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/surdiana/gateway/internal/dto"
-	apperrors "github.com/surdiana/gateway/internal/errors"
-	"github.com/surdiana/gateway/internal/model"
-	"github.com/surdiana/gateway/internal/repository"
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	apperrors "github.com/Payphone-Digital/gateway/internal/errors"
+	"github.com/Payphone-Digital/gateway/internal/model"
+	"github.com/Payphone-Digital/gateway/internal/repository"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )

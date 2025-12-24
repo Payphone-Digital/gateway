@@ -102,12 +102,14 @@ func ParsePaginationParamsWithFilter(c *gin.Context, filterStruct any) Paginatio
 				case reflect.String:
 					dynamicTypedParams[queryTag] = value
 				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					if intVal, err := strconv.Atoi(value); err == nil {
-						dynamicTypedParams[queryTag] = intVal
+					if intVal, err := strconv.ParseInt(value, 10, 64); err == nil {
+						// Convert int64 to the specific integer type of the field
+						dynamicTypedParams[queryTag] = reflect.ValueOf(intVal).Convert(field.Type).Interface()
 					}
 				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 					if uintVal, err := strconv.ParseUint(value, 10, 64); err == nil {
-						dynamicTypedParams[queryTag] = uintVal
+						// Convert uint64 to the specific unsigned integer type of the field
+						dynamicTypedParams[queryTag] = reflect.ValueOf(uintVal).Convert(field.Type).Interface()
 					}
 				case reflect.Bool:
 					dynamicTypedParams[queryTag] = value == "true" || value == "1"
@@ -133,7 +135,10 @@ func ParsePaginationParamsWithFilter(c *gin.Context, filterStruct any) Paginatio
 	}
 
 	return PaginationParams{
-		All: allParams,
+		Page:   pagination.Page,
+		Limit:  pagination.Limit,
+		Offset: pagination.Offset,
+		All:    allParams,
 	}
 }
 
@@ -164,15 +169,23 @@ func BuildListResponse(total int64, page int, pageTotal int, data any) map[strin
 }
 
 func BuildErrorResponse(message string, details any) map[string]any {
-	response := map[string]any{
-		ResponseFieldMessage: message,
-	}
-
+	// If details is provided and is a non-empty string, use it as the message
+	// Otherwise, use the message parameter
+	var finalMessage string
+	
 	if details != nil {
-		response[ResponseFieldDetails] = details
+		if detailsStr, ok := details.(string); ok && detailsStr != "" {
+			finalMessage = detailsStr
+		} else {
+			finalMessage = message
+		}
+	} else {
+		finalMessage = message
 	}
 
-	return response
+	return map[string]any{
+		ResponseFieldMessage: finalMessage,
+	}
 }
 
 func BuildSuccessResponse(message string) map[string]any {

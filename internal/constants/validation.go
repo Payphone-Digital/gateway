@@ -24,3 +24,22 @@ const (
 	EmailPattern = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 	PhonePattern = `^\+?[1-9]\d{1,14}$` // E.164 format
 )
+
+// Dynamic Validation Rules
+const (
+	ValidationRequired     = "required"
+	ValidationMin          = "min"
+	ValidationMax          = "max"
+	ValidationEmail        = "email"
+	ValidationURL          = "url"
+	ValidationPattern      = "pattern"
+	ValidationNumeric      = "numeric"
+	ValidationAlpha        = "alpha"
+	ValidationAlphanumeric = "alphanumeric"
+	ValidationMinItems     = "minItems"
+	ValidationMaxItems     = "maxItems"
+	ValidationUUID         = "uuid"
+	ValidationDate         = "date"
+	ValidationIP           = "ip"
+	ValidationEnum         = "enum"
+)

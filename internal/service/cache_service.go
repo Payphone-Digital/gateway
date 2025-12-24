@@ -9,26 +9,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/surdiana/gateway/internal/dto"
-	"github.com/surdiana/gateway/pkg/logger"
-	"github.com/surdiana/gateway/pkg/redis"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/redis"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 type CacheService struct {
-	redisClient *redis.Client
+	redisClient redis.Client
 }
 
 type CacheConfig struct {
-	DefaultTTL    time.Duration
-	EnableCache   bool
-	KeyPrefix     string
-	MaxKeyLength  int
+	DefaultTTL   time.Duration
+	EnableCache  bool
+	KeyPrefix    string
+	MaxKeyLength int
 }
 
 // NewCacheService creates a new cache service
-func NewCacheService(redisClient *redis.Client) *CacheService {
+func NewCacheService(redisClient redis.Client) *CacheService {
 	return &CacheService{
 		redisClient: redisClient,
 	}
@@ -41,7 +41,7 @@ func (s *CacheService) GenerateCacheKey(config *dto.APIConfigResponse, c *gin.Co
 
 	// Add config details
 	h.Write([]byte(fmt.Sprintf("slug:%s:method:%s:uri:%s",
-		config.Slug, config.Method, config.URI)))
+		config.Path, config.Method, config.URI)))
 
 	// Add request method and path
 	h.Write([]byte(fmt.Sprintf(":%s:%s", c.Request.Method, c.Request.URL.Path)))
@@ -95,7 +95,7 @@ func (s *CacheService) GenerateCacheKey(config *dto.APIConfigResponse, c *gin.Co
 
 	// Generate final key
 	keyHash := fmt.Sprintf("%x", h.Sum(nil))
-	return fmt.Sprintf("integration:%s:%s", config.Slug, keyHash)
+	return fmt.Sprintf("integration:%s:%s", config.Path, keyHash)
 }
 
 // GetCachedResponse retrieves cached response if available and valid
@@ -200,11 +200,11 @@ func (s *CacheService) determineTTL(status int, config *dto.APIConfigResponse) t
 	case http.StatusOK:
 		return 10 * time.Minute // Success responses can be cached longer
 	case http.StatusCreated:
-		return 5 * time.Minute  // Created responses
+		return 5 * time.Minute // Created responses
 	case http.StatusNoContent:
-		return 1 * time.Minute  // No content responses
+		return 1 * time.Minute // No content responses
 	case http.StatusNotFound:
-		return 2 * time.Minute  // 404s can be cached briefly
+		return 2 * time.Minute // 404s can be cached briefly
 	case http.StatusTooManyRequests:
 		return 30 * time.Second // Rate limit responses
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:

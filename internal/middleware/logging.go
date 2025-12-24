@@ -3,9 +3,10 @@ package middleware
 import (
 	"bytes"
 	"io"
+	"strings"
 	"time"
 
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -149,7 +150,7 @@ func isSuspiciousUserAgent(userAgent string) bool {
 	}
 
 	for _, pattern := range suspiciousPatterns {
-		if contains(userAgent, pattern) {
+		if strings.Contains(strings.ToLower(userAgent), pattern) {
 			return true
 		}
 	}
@@ -157,20 +158,4 @@ func isSuspiciousUserAgent(userAgent string) bool {
 	return false
 }
 
-// contains checks if a string contains a substring (case-insensitive)
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		(len(s) > len(substr) &&
-			(s[:len(substr)] == substr ||
-			 s[len(s)-len(substr):] == substr ||
-			 containsMiddle(s, substr))))
-}
 
-func containsMiddle(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	ctxutil "github.com/surdiana/gateway/pkg/context"
-	"github.com/surdiana/gateway/pkg/logger"
+	ctxutil "github.com/Payphone-Digital/gateway/pkg/context"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -93,7 +93,7 @@ func ProcessIntegrationWithContext(ctx context.Context, resp APIResponseConfig) 
 	ctx = context.WithValue(ctx, ctxutil.ModuleKey, "integrasi")
 
 	logger.InfoWithContext(ctx, "Processing integration").
-		String("slug", resp.Slug).
+		String("slug", resp.Path).
 		String("method", resp.Method).
 		String("url_template", resp.URL).
 		Int("timeout", resp.Timeout).
@@ -246,7 +246,7 @@ func (resp APIResponseConfig) BuildAPIRequestConfigWithContext(ctx context.Conte
 		Timeout:    timeout,
 		MaxRetries: resp.MaxRetries,
 		RetryDelay: resp.RetryDelay,
-		LogFile:    fmt.Sprintf("logs/%s.log", resp.Slug),
+		LogFile:    fmt.Sprintf("logs/%s.log", resp.Path),
 		LogLevel:   "info",
 	}
 

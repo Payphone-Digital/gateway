@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/surdiana/gateway/internal/constants"
-	"github.com/surdiana/gateway/internal/dto"
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/internal/constants"
+	"github.com/Payphone-Digital/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -39,6 +39,7 @@ const (
 	TypeBoolean DataType = constants.DataTypeBoolean
 	TypeObject  DataType = constants.DataTypeObject
 	TypeArray   DataType = constants.DataTypeArray
+	TypeDate    DataType = constants.DataTypeDate
 
 	EncodingNone      EncodingType = constants.EncodingNone
 	EncodingBase64    EncodingType = constants.EncodingBase64
@@ -61,7 +62,7 @@ type Variable struct {
 }
 
 type APIResponseConfig struct {
-	Slug        string              `json:"slug"`
+	Path        string              `json:"path"`
 	Method      string              `json:"method"`
 	URL         string              `json:"url"`
 	Headers     map[string]string   `json:"headers"`
@@ -93,7 +94,7 @@ func getContextVariable(c *gin.Context, key string) (interface{}, bool) {
 	return value, exists
 }
 
-func extractUserVars(c *gin.Context) RequestParams {
+func ExtractUserVars(c *gin.Context) RequestParams {
 	params := RequestParams{
 		PathParams:   make(map[string]string),
 		QueryParams:  make(map[string]string),
@@ -101,9 +102,19 @@ func extractUserVars(c *gin.Context) RequestParams {
 		HeaderParams: make(map[string]string),
 	}
 
-	// Extract path parameters
+	// Extract path parameters from Gin's standard params
 	for _, param := range c.Params {
 		params.PathParams[param.Key] = param.Value
+	}
+
+	// Extract URI parameters from Dynamic URI Middleware (custom trie-based routing)
+	// This is set by middleware/dynamic_uri.go when matching dynamic routes like /products/{id}
+	if uriParams, exists := c.Get("uri_params"); exists {
+		if uriParamsMap, ok := uriParams.(map[string]string); ok {
+			for k, v := range uriParamsMap {
+				params.PathParams[k] = v
+			}
+		}
 	}
 
 	// Extract query parameters
@@ -186,6 +197,18 @@ func convertToDataType(value string, dataType DataType) interface{} {
 		}
 		return make([]interface{}, 0)
 
+	case TypeDate:
+		// Attempt to parse as RFC3339 first
+		if t, err := time.Parse(time.RFC3339, value); err == nil {
+			return t.Format(time.RFC3339)
+		}
+		// Attempt to parse as YYYY-MM-DD
+		if t, err := time.Parse("2006-01-02", value); err == nil {
+			return t.Format(time.RFC3339) // Normalize to ISO8601
+		}
+		// If fails, return original value (validation will catch it)
+		return value
+
 	default: // TypeString
 		return value
 	}
@@ -205,7 +228,9 @@ func resolveTemplate(text string, variables map[string]Variable, c *gin.Context)
 			return fmt.Sprintf("%v", contextVal)
 		}
 
-		return ""
+		// Variable not registered - return literal template (strict mode)
+		// This ensures {{name}} without registration sends literal "{{name}}" to backend
+		return match
 	})
 }
 
@@ -238,14 +263,17 @@ func resolveBodyInterface(value interface{}, variables map[string]Variable, c *g
 	switch v := value.(type) {
 	case string:
 		if strings.Contains(v, "{{") && strings.Contains(v, "}}") {
+			// Check if the entire value is a single variable placeholder (e.g., "{{data}}")
 			re := regexp.MustCompile(`^{{(.*?)}}$`)
 			if matches := re.FindStringSubmatch(v); len(matches) > 1 {
 				varName := strings.TrimSpace(matches[1])
 				if variable, exists := variables[varName]; exists {
-					resolved := resolveTemplate(v, variables, c)
-					return convertToDataType(resolved, variable.DataType)
+					// Use resolveVariable directly to get proper typed value (object, array, etc.)
+					// This avoids the string conversion in resolveTemplate
+					return resolveVariable(variable, variables, c)
 				}
 			}
+			// For mixed text with templates (e.g., "Hello {{name}}"), use resolveTemplate
 			return resolveTemplate(v, variables, c)
 		}
 		return v
@@ -273,9 +301,9 @@ func resolveBodyInterface(value interface{}, variables map[string]Variable, c *g
 }
 
 func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestConfig {
-	zapLogger := logger.GetLogger().With(zap.String("slug", resp.Slug))
+	zapLogger := logger.GetLogger().With(zap.String("slug", resp.Path))
 
-	userParams := extractUserVars(c)
+	userParams := ExtractUserVars(c)
 
 	// Create variables map with context variables
 	contextVars := map[string]Variable{
@@ -323,8 +351,23 @@ func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestCo
 		}
 	}
 
+	// Tandai parameter yang didefinisikan di Body
+	if len(resp.Body) > 0 {
+		bodyStr := string(resp.Body)
+		matches := re.FindAllStringSubmatch(bodyStr, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				definedParams[match[1]] = "body"
+			}
+		}
+	}
+
 	// Merge variables based on their intended destination and definition
 	finalVars := resp.Variables
+	if finalVars == nil {
+		finalVars = make(map[string]Variable)
+	}
+	
 	for key, variable := range finalVars {
 		if variable.Value == "" {
 			paramType, isDefined := definedParams[key]
@@ -357,7 +400,43 @@ func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestCo
 						DataType: variable.DataType,
 					}
 				}
+			case "body":
+				// For body params, get value from user's request body
+				if bodyValue, exists := userParams.BodyParams[key]; exists {
+					// Convert interface{} to string for Variable.Value
+					var strValue string
+					switch v := bodyValue.(type) {
+					case string:
+						strValue = v
+					default:
+						if b, err := json.Marshal(v); err == nil {
+							strValue = string(b)
+						}
+					}
+					finalVars[key] = Variable{
+						Value:    strValue,
+						Encoding: variable.Encoding,
+						DataType: variable.DataType,
+					}
+				}
 			}
+		}
+	}
+
+	// Auto-add ALL path params from request to finalVars
+	// This makes path params available for use in any variable value (e.g., {{id}} in formula)
+	// Body/Header/Query templates still require explicit variable registration (strict mode)
+	for paramName, pathValue := range userParams.PathParams {
+		if _, exists := finalVars[paramName]; !exists {
+			finalVars[paramName] = Variable{
+				Value:    pathValue,
+				Encoding: string(EncodingNone),
+				DataType: TypeString,
+			}
+			zapLogger.Debug("Auto-added path param to variables",
+				zap.String("param", paramName),
+				zap.String("value", pathValue),
+			)
 		}
 	}
 
@@ -398,27 +477,16 @@ func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestCo
 		zap.Any("query", finalQuery),
 	)
 
-	// Process Body with user parameters
+	// Process Body - ONLY use configured body template with variable substitution
+	// User input is already captured in finalVars during variable population
+	// DO NOT merge user body params directly - this would bypass variable rules
 	var finalBody map[string]interface{}
 	if len(resp.Body) > 0 {
 		var rawBody interface{}
 		if err := json.Unmarshal(resp.Body, &rawBody); err == nil {
-			// If we have user-provided body params, merge them or use them
-			if len(userParams.BodyParams) > 0 {
-				if mapBody, ok := rawBody.(map[string]interface{}); ok {
-					// Merge user params with configured body
-					for k, v := range userParams.BodyParams {
-						mapBody[k] = v
-					}
-					rawBody = mapBody
-				} else {
-					// If configured body is not a map, use user params directly
-					rawBody = userParams.BodyParams
-				}
-			}
-
+			// Resolve templates in config body using finalVars (which contains user input for empty-value variables)
 			resolved := resolveBodyInterface(rawBody, finalVars, c)
-			zapLogger.Info("Request body processed",
+			zapLogger.Info("Request body processed with variable substitution",
 				zap.Any("body", resolved),
 			)
 			if b, err := json.Marshal(resolved); err == nil {
@@ -429,20 +497,9 @@ func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestCo
 				}
 			}
 		}
-	} else if len(userParams.BodyParams) > 0 {
-		// If no configured body but we have user params, use them directly
-		resolved := resolveBodyInterface(userParams.BodyParams, finalVars, c)
-		zapLogger.Info("User body processed",
-			zap.Any("body", resolved),
-		)
-		if b, err := json.Marshal(resolved); err == nil {
-			if err := json.Unmarshal(b, &finalBody); err != nil {
-				zapLogger.Error("Failed to unmarshal user body",
-					zap.Error(err),
-				)
-			}
-		}
 	}
+	// Note: If no configured body (resp.Body is empty), we don't send any body
+	// This enforces that body template must be configured to accept any body params
 
 	timeout := resp.Timeout
 	if timeout <= 0 {
@@ -468,7 +525,7 @@ func (resp APIResponseConfig) BuildAPIRequestConfig(c *gin.Context) APIRequestCo
 		Timeout:    timeout,
 		MaxRetries: maxRetries,
 		RetryDelay: retryDelay,
-		LogFile:    fmt.Sprintf("logs/%s.log", resp.Slug),
+		LogFile:    fmt.Sprintf("logs/%s.log", resp.Path),
 		LogLevel:   "info",
 	}
 }
@@ -477,7 +534,7 @@ func ConvertToAPIResponseConfig(resp *dto.APIConfigResponse) APIResponseConfig {
 	vars := make(map[string]Variable)
 	for k, v := range resp.Variables {
 		vars[k] = Variable{
-			Value:    v.Value,
+			Value:    getValueString(v.Value),
 			Encoding: v.Encoding,
 			DataType: DataType(v.DataType),
 		}
@@ -491,7 +548,7 @@ func ConvertToAPIResponseConfig(resp *dto.APIConfigResponse) APIResponseConfig {
 	}
 
 	return APIResponseConfig{
-		Slug:        resp.Slug,
+		Path:        resp.Path,
 		Method:      resp.Method,
 		URL:         resp.URL,
 		Headers:     resp.Headers,
@@ -507,7 +564,7 @@ func ConvertToAPIResponseConfig(resp *dto.APIConfigResponse) APIResponseConfig {
 
 // DoRequestWithProtocol supports both HTTP and gRPC protocols
 func DoRequestWithProtocol(ctx context.Context, resp *dto.APIConfigResponse, c *gin.Context) ([]byte, int, error) {
-	zapLogger := logger.GetLogger().With(zap.String("slug", resp.Slug))
+	zapLogger := logger.GetLogger().With(zap.String("slug", resp.Path))
 
 	switch resp.Protocol {
 	case "grpc":
@@ -518,7 +575,7 @@ func DoRequestWithProtocol(ctx context.Context, resp *dto.APIConfigResponse, c *
 		vars := make(map[string]Variable)
 		for k, v := range resp.Variables {
 			vars[k] = Variable{
-				Value:    v.Value,
+				Value:    getValueString(v.Value),
 				Encoding: v.Encoding,
 				DataType: DataType(v.DataType),
 			}

@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/surdiana/gateway/pkg/logger"
+	"github.com/Payphone-Digital/gateway/pkg/logger"
 	"go.uber.org/zap"
 )
 

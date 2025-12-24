@@ -1,13 +1,14 @@
 package router
 
 import (
-	"github.com/surdiana/gateway/internal/dto"
+	"github.com/Payphone-Digital/gateway/internal/dto"
 	"github.com/gin-gonic/gin"
 )
 
 func (r *Router) integrasiRoutes(version *gin.RouterGroup) {
-	//URL Config
+	// URL Config - Protected with JWT authentication
 	urlConfig := version.Group("/url-config")
+	urlConfig.Use(r.jwtMw.RequireAuth()) // JWT protection for all URL Config routes
 	{
 		urlConfig.POST("", r.validMw.ValidateRequestBody(func() interface{} { return &dto.URLConfigRequest{} }), r.IntegrasiHandler.CreateURLConfig)
 		urlConfig.PUT("/:id", r.validMw.ValidateRequestBody(func() interface{} { return &dto.URLConfigRequest{} }), r.IntegrasiHandler.UpdateURLConfig)
@@ -15,8 +16,10 @@ func (r *Router) integrasiRoutes(version *gin.RouterGroup) {
 		urlConfig.GET("/:id", r.IntegrasiHandler.GetByIDURLConfig)
 		urlConfig.GET("", r.IntegrasiHandler.GetAllURLConfig)
 	}
-	// Path Config
+
+	// Path Config - Protected with JWT authentication
 	pathConfig := version.Group("/path-config")
+	pathConfig.Use(r.jwtMw.RequireAuth()) // JWT protection for all Path Config routes
 	{
 		pathConfig.POST("", r.validMw.ValidateRequestBody(func() interface{} { return &dto.APIConfigRequest{} }), r.IntegrasiHandler.CreateConfig)
 		pathConfig.PUT("/:id", r.validMw.ValidateRequestBody(func() interface{} { return &dto.APIConfigRequest{} }), r.IntegrasiHandler.UpdateConfig)
@@ -24,6 +27,8 @@ func (r *Router) integrasiRoutes(version *gin.RouterGroup) {
 		pathConfig.GET("/:id", r.IntegrasiHandler.GetByIDConfig)
 		pathConfig.GET("", r.IntegrasiHandler.GetAllConfig)
 	}
+
+
 
 	// integrasi := version.Group("/integrasi")
 	// {
